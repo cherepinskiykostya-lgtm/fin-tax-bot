@@ -1,5 +1,6 @@
 import os
 
+
 def url() -> str:
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
@@ -15,3 +16,11 @@ def url() -> str:
         dsn = dsn.replace("postgresql://", "postgresql+asyncpg://", 1)
 
     return dsn
+
+
+async def init_models() -> None:
+    """Ensure that all ORM models have backing tables in the database."""
+    from .session import Base, engine  # local import to avoid circular dependency
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)

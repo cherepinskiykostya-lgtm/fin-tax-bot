@@ -8,6 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 from handlers.moderation import queue_cmd, preview_cmd, approve_cmd
 from handlers.draft_make import make_cmd
 from jobs.fetch import run_ingest_cycle
+from db import init_models
 
 
 from settings import settings
@@ -77,6 +78,9 @@ async def on_startup():
     await tg_app.initialize()
     await tg_app.start()
 
+    await init_models()
+    log.info("Database schema ensured")
+
     await tg_app.bot.set_my_commands(BOT_COMMANDS)
     log.info("Bot commands menu initialized")
 
@@ -88,6 +92,7 @@ async def on_startup():
     scheduler.add_job(scheduled_job, CronTrigger(minute="*/10"))
     scheduler.start()
     scheduler.add_job(_schedule_ingest_cycle, CronTrigger(minute="*/30"))
+    _schedule_ingest_cycle()
 
     if settings.BASE_URL:
         url = f"{settings.BASE_URL}/webhook/{settings.WEBHOOK_SECRET}"
