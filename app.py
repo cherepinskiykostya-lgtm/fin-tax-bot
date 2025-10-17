@@ -4,6 +4,11 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+# вверху рядом с другими import
+from handlers.moderation import queue_cmd, preview_cmd, approve_cmd
+from handlers.draft_make import make_cmd
+from jobs.fetch import run_ingest_cycle
+
 
 from settings import settings
 from handlers.base import start, help_cmd, ping
@@ -44,6 +49,10 @@ def admin_only(handler_func):
 tg_app.add_handler(CommandHandler("start", admin_only(start)))
 tg_app.add_handler(CommandHandler("help", admin_only(help_cmd)))
 tg_app.add_handler(CommandHandler("ping", admin_only(ping)))
+tg_app.add_handler(CommandHandler("queue", queue_cmd))
+tg_app.add_handler(CommandHandler("preview", preview_cmd))
+tg_app.add_handler(CommandHandler("approve", approve_cmd))
+tg_app.add_handler(CommandHandler("make", make_cmd))
 
 # --- Webhook endpoint ---
 @app.post(f"/webhook/{settings.WEBHOOK_SECRET}")
@@ -71,6 +80,9 @@ async def on_startup():
 
     scheduler.add_job(scheduled_job, CronTrigger(minute="*/10"))
     scheduler.start()
+    # в on_startup(), после scheduler.start():
+    from apscheduler.triggers.cron import CronTrigger
+    scheduler.add_job(lambda: tg_app.create_task(run_ingest_cycle()), CronTrigger(minute="*/30"))
 
     if settings.BASE_URL:
         url = f"{settings.BASE_URL}/webhook/{settings.WEBHOOK_SECRET}"
