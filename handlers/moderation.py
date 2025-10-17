@@ -31,7 +31,14 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Показать 5 последних драфтов на модерации.
     """
     async with SessionLocal() as s:  # type: AsyncSession
-        rows = (await s.execute(select(Draft).where(Draft.approved == False).order_by(Draft.id.desc()).limit(5))).scalars().all()
+        rows = (
+            await s.execute(
+                select(Draft)
+                .where(Draft.approved == False)
+                .order_by(Draft.id.desc())
+                .limit(5)
+            )
+        ).scalars().all()
     if not rows:
         await update.message.reply_text("Черга порожня.")
         return
@@ -47,7 +54,7 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /preview <draft_id>
     """
     if not context.args:
-        await update.message.replyText("Використання: /preview <id>")
+        await update.message.reply_text("Використання: /preview <id>")
         return
     try:
         did = int(context.args[0])
@@ -118,4 +125,3 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await s.commit()
 
     await update.message.reply_text("Опубліковано ✅")
-moderation.py
