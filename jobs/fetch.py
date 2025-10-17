@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse, urlencode
@@ -58,10 +59,13 @@ def _in_whitelist_lvl1(domain: str) -> bool:
 async def _fetch_html(url: str) -> str | None:
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=20, headers=REQUEST_HEADERS) as client:
+            log.debug("fetching html: %s", url)
             r = await client.get(url)
             if r.status_code == 200 and r.text:
                 return r.text
-    except Exception:
+            log.warning("html fetch failed %s: status=%s", url, r.status_code)
+    except Exception as exc:
+        log.warning("html fetch exception %s: %s", url, exc)
         return None
     return None
 
@@ -101,38 +105,57 @@ def _extract_image(html: str) -> str | None:
         return None
     return None
 
-async def ingest_one(url: str, title: str, published: datetime | None, summary: str | None):
+async def ingest_one(url: str, title: str, published: datetime | None, summary: str | None) -> str:
     dom = _domain(url)
     lvl1 = _in_whitelist_lvl1(dom)
 
-    # простая проверка дубликатов
-    async with SessionLocal() as s:
-        exists = (await s.execute(select(Article.id).where(Article.url == url))).scalar_one_or_none()
-        if exists:
-            return
+    try:
+        async with SessionLocal() as s:
+            exists = (await s.execute(select(Article.id).where(Article.url == url))).scalar_one_or_none()
+            if exists:
+                log.info("skip duplicate article url=%s existing_id=%s", url, exists)
+                return "duplicate"
 
-        image_url = None
-        html = await _fetch_html(url)
-        if html:
-            image_url = _extract_image(html)
+            image_url = None
+            html = await _fetch_html(url)
+            if html:
+                image_url = _extract_image(html)
+            else:
+                log.debug("no html content for %s", url)
 
-        art = Article(
-            title=title or url,
-            url=url,
-            source_domain=dom,
-            published_at=published,
-            summary=summary,
-            image_url=image_url,
-            level1_ok=lvl1,
-            topics=None,
-        )
-        s.add(art)
-        await s.commit()
+            art = Article(
+                title=title or url,
+                url=url,
+                source_domain=dom,
+                published_at=published,
+                summary=summary,
+                image_url=image_url,
+                level1_ok=lvl1,
+                topics=None,
+            )
+            s.add(art)
+            await s.commit()
+            await s.refresh(art)
+            log.info(
+                "stored article id=%s domain=%s level1=%s published=%s",
+                art.id,
+                dom,
+                lvl1,
+                published,
+            )
+            return "created"
+    except Exception:
+        log.exception("failed to ingest article url=%s", url)
+        return "error"
 
 async def run_ingest_cycle():
+    log.info("starting ingest cycle")
+    results: Counter[str] = Counter()
+
     # 1) RSS seed
     for feed_url in SEED_RSS:
         try:
+            log.info("processing seed feed %s", feed_url)
             fp = feedparser.parse(feed_url)
             for e in fp.entries[:20]:
                 link = getattr(e, "link", None)
@@ -142,7 +165,10 @@ async def run_ingest_cycle():
                 if getattr(e, "published_parsed", None):
                     published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
                 if link:
-                    await ingest_one(link, title, published, summary)
+                    status = await ingest_one(link, title, published, summary)
+                    results[status] += 1
+                else:
+                    log.debug("entry without link in feed %s", feed_url)
         except Exception as e:
             log.warning("RSS error %s: %s", feed_url, e)
 
@@ -164,4 +190,11 @@ async def run_ingest_cycle():
                     if getattr(e, "published_parsed", None):
                         published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
                     if link:
-                        await ingest_one(link, title, published, summary)
+                        status = await ingest_one(link, title, published, summary)
+                        results[status] += 1
+                    else:
+                        log.debug("entry without link in topic %s", topic)
+    if results:
+        log.info("ingest cycle finished: created=%s duplicate=%s error=%s", results.get("created", 0), results.get("duplicate", 0), results.get("error", 0))
+    else:
+        log.info("ingest cycle finished: no entries processed")

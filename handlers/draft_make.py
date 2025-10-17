@@ -60,7 +60,8 @@ async def _llm_rewrite_ua(text: str) -> str:
             temperature=0.3,
         )
         return completion.choices[0].message["content"][:1200]
-    except Exception:
+    except Exception as exc:
+        log.warning("llm rewrite failed, fallback to original text: %s", exc)
         return text[:900]
 
 @admin_only
@@ -77,14 +78,19 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Некоректний ID.")
         return
 
+    uid = update.effective_user.id if update.effective_user else None
+    log.info("make_cmd requested by %s for article_id=%s", uid, aid)
+
     async with SessionLocal() as s:  # type: AsyncSession
         a = await s.get(Article, aid)
         if not a:
+            log.warning("article not found for draft creation: id=%s", aid)
             await update.message.reply_text("Статтю не знайдено.")
             return
 
         # Строгая политка: нужен уровень 1
         if not a.level1_ok:
+            log.info("article level1 check failed for id=%s", aid)
             await update.message.reply_text("Відхилено: джерело не входить до Рівень 1.")
             return
 
@@ -107,5 +113,9 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s.add(d)
         a.taken = True
         await s.commit()
+        await s.refresh(d)
+        log.info(
+            "draft created id=%s for article=%s by user=%s", d.id, a.id, uid
+        )
 
     await update.message.reply_text(f"Драфт створено ✅  ID: {d.id}. Використай /preview {d.id} або /approve {d.id}")
