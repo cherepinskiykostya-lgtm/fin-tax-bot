@@ -56,7 +56,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/queue — очередь драфтов\n"
         "/preview <id> — предпросмотр драфта\n"
         "/approve <id> — публикация драфта\n"
-        "/make — вибір статті та створення драфта"
+        "/make — создать задачу"
     )
     if update.message:
         await update.message.reply_text(text, reply_markup=MAIN_MENU_KEYBOARD)
