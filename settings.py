@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     @field_validator("ADMIN_IDS", mode="before")
     @classmethod
     def parse_admin_ids(cls, v):
-        # Поддерживаем строку вида "1,2,3" или список/кортеж
+        """Парсим строку '1,2,3' в список int"""
         if v is None or v == "":
             return []
         if isinstance(v, str):
