@@ -6,9 +6,10 @@ from db.models import User
 
 MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
     [
-        [KeyboardButton("/queue"), KeyboardButton("/preview")],
-        [KeyboardButton("/approve"), KeyboardButton("/make")],
-        [KeyboardButton("/help"), KeyboardButton("/ping")],
+        [KeyboardButton("/articles"), KeyboardButton("/queue")],
+        [KeyboardButton("/preview"), KeyboardButton("/approve")],
+        [KeyboardButton("/make"), KeyboardButton("/help")],
+        [KeyboardButton("/ping")],
     ],
     resize_keyboard=True,
 )
@@ -18,6 +19,7 @@ BOT_COMMANDS = [
     BotCommand("start", "Запустить бота"),
     BotCommand("help", "Справка по командам"),
     BotCommand("ping", "Проверка доступности"),
+    BotCommand("articles", "Показать свежие статьи"),
     BotCommand("queue", "Показать очередь драфтов"),
     BotCommand("preview", "Показать драфт по ID"),
     BotCommand("approve", "Опубликовать драфт"),
@@ -53,6 +55,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start — начать\n"
         "/help — помощь\n"
         "/ping — проверка\n"
+        "/articles [N|all] — свежие статьи\n"
         "/queue — очередь драфтов\n"
         "/preview <id> — предпросмотр драфта\n"
         "/approve <id> — публикация драфта\n"

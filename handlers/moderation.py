@@ -1,6 +1,6 @@
 import logging
 from typing import Optional
-from telegram import Update, InputMediaPhoto
+from telegram import Update
 from telegram.ext import ContextTypes
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,7 +35,8 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with SessionLocal() as s:  # type: AsyncSession
         rows = (
             await s.execute(
-                select(Draft)
+                select(Draft, Article)
+                .join(Article, Article.id == Draft.article_id)
                 .where(
                     or_(
                         Draft.approved.is_(False),
@@ -45,14 +46,17 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 .order_by(Draft.id.desc())
                 .limit(5)
             )
-        ).scalars().all()
+        ).all()
     if not rows:
         log.info("queue_cmd: no drafts found")
         await update.message.reply_text("Черга порожня.")
         return
     text = "Останні драфти (неопубліковані):\n"
-    for d in rows:
-        text += f"- ID {d.id} (article {d.article_id})\n"
+    for draft, article in rows:
+        text += (
+            f"- ID {draft.id} → стаття {article.id} | {article.source_domain} | "
+            f"{article.title[:80]}{'…' if len(article.title) > 80 else ''}\n"
+        )
     await update.message.reply_text(text)
 
 
@@ -145,3 +149,40 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.info("approve_cmd: draft=%s published by %s", did, uid)
 
     await update.message.reply_text("Опубліковано ✅")
+
+
+@admin_only
+async def articles_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать последние собранные статьи (по умолчанию только свободные)."""
+
+    limit = 10
+    if context.args:
+        try:
+            parsed = int(context.args[0])
+            limit = max(1, min(parsed, 30))
+        except ValueError:
+            pass
+
+    include_taken = False
+    if context.args and context.args[-1].lower() in {"all", "всі", "все"}:
+        include_taken = True
+
+    async with SessionLocal() as s:  # type: AsyncSession
+        stmt = select(Article).order_by(Article.id.desc()).limit(limit)
+        if not include_taken:
+            stmt = stmt.where(or_(Article.taken.is_(False), Article.taken.is_(None)))
+        rows = (await s.execute(stmt)).scalars().all()
+
+    if not rows:
+        await update.message.reply_text("Немає статей за заданими умовами.")
+        return
+
+    lines = ["Останні статті:"]
+    for art in rows:
+        status = "✅ є драфт" if art.taken else "🆕 вільна"
+        lvl = "L1" if art.level1_ok else "L2"
+        lines.append(
+            f"- {status} | ID {art.id} | {lvl} | {art.source_domain} | "
+            f"{art.title[:80]}{'…' if len(art.title) > 80 else ''}"
+        )
+    await update.message.reply_text("\n".join(lines))
