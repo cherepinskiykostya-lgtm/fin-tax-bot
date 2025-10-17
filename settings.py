@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # Бел-лист доменов (Рівень 1 и 2)
     WHITELIST_LEVEL1: str = (
-        "oecd.org, europa.eu, eur-lex.europa.eu, zakon.rada.gov.ua, bank.gov.ua, "
+        "oecd.org, europa.eu, eur-lex.europa.eu, zakon.rada.gov.ua, bank.gov.ua, diia.gov.ua, "
         "tax.gov.ua, minfin.gov.ua, minjust.gov.ua, reyestr.court.gov.ua, curia.europa.eu, "
         "irs.gov, gov.uk, hmrc.gov.uk, bundesfinanzministerium.de, agenziaentrate.gov.it, "
         "tax.gov.ae, cbu.ae, ec.europa.eu"
