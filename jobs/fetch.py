@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 from urllib.parse import urlparse, urlencode
 
 import httpx
@@ -13,6 +14,13 @@ from db.session import SessionLocal
 from db.models import Article
 
 log = logging.getLogger("bot")
+
+REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+    "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
+}
 
 TOPIC_QUERIES = {
     "PillarTwo": '("Pillar Two" OR GloBE OR BEPS) site:oecd.org OR site:europa.eu OR site:eur-lex.europa.eu',
@@ -49,13 +57,35 @@ def _in_whitelist_lvl1(domain: str) -> bool:
 
 async def _fetch_html(url: str) -> str | None:
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
-            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20, headers=REQUEST_HEADERS) as client:
+            r = await client.get(url)
             if r.status_code == 200 and r.text:
                 return r.text
     except Exception:
         return None
     return None
+
+
+async def _load_feed(client: httpx.AsyncClient, url: str) -> Optional[feedparser.FeedParserDict]:
+    try:
+        response = await client.get(url)
+    except httpx.HTTPError as exc:
+        log.warning("Feed fetch error %s: %s", url, exc)
+        return None
+
+    if response.status_code != httpx.codes.OK:
+        log.warning("Feed fetch failed %s: HTTP %s", url, response.status_code)
+        return None
+
+    final_host = response.url.host or ""
+    if "consent.google.com" in final_host:
+        log.warning("Google News feed requires consent, skipping: %s", url)
+        return None
+
+    parsed = feedparser.parse(response.content)
+    if getattr(parsed, "bozo", False) and getattr(parsed, "bozo_exception", None):
+        log.warning("Feed parsing issue %s: %s", url, parsed.bozo_exception)
+    return parsed
 
 def _extract_image(html: str) -> str | None:
     try:
@@ -119,11 +149,13 @@ async def run_ingest_cycle():
     # 2) Google News
     if settings.ENABLE_GOOGLE_NEWS:
         base = "https://news.google.com/rss/search?"
-        for topic, q in TOPIC_QUERIES.items():
-            params = {"q": q, "hl": "uk", "gl": "UA", "ceid": "UA:uk"}
-            url = base + urlencode(params)
-            try:
-                fp = feedparser.parse(url)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20, headers=REQUEST_HEADERS) as client:
+            for topic, q in TOPIC_QUERIES.items():
+                params = {"q": q, "hl": "uk", "gl": "UA", "ceid": "UA:uk"}
+                url = base + urlencode(params)
+                fp = await _load_feed(client, url)
+                if not fp:
+                    continue
                 for e in fp.entries[:20]:
                     link = getattr(e, "link", None)
                     title = getattr(e, "title", "")
@@ -133,5 +165,3 @@ async def run_ingest_cycle():
                         published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
                     if link:
                         await ingest_one(link, title, published, summary)
-            except Exception as e:
-                log.warning("GNews error %s: %s", topic, e)
