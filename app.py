@@ -26,10 +26,14 @@ async def scheduled_job():
 def admin_only(handler_func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id if update.effective_user else None
-        if not user_id or user_id not in settings.ADMIN_IDS:
+        admin_ids = settings.ADMIN_IDS  # <- получаем список int из settings
+        if not user_id or user_id not in admin_ids:
             log.warning(f"⛔️ Access denied for user {user_id}")
             try:
-                await update.message.reply_text("Доступ запрещён.")
+                if update.message:
+                    await update.message.reply_text("Доступ запрещён.")
+                elif update.callback_query:
+                    await update.callback_query.answer("Доступ запрещён.", show_alert=True)
             except Exception:
                 pass
             return
