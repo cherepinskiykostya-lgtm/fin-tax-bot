@@ -30,6 +30,8 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Показать 5 последних драфтов на модерации.
     """
+    uid = update.effective_user.id if update.effective_user else None
+    log.info("queue_cmd requested by %s", uid)
     async with SessionLocal() as s:  # type: AsyncSession
         rows = (
             await s.execute(
@@ -45,6 +47,7 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ).scalars().all()
     if not rows:
+        log.info("queue_cmd: no drafts found")
         await update.message.reply_text("Черга порожня.")
         return
     text = "Останні драфти (неопубліковані):\n"
@@ -67,9 +70,13 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Некоректний ID.")
         return
 
+    uid = update.effective_user.id if update.effective_user else None
+    log.info("preview_cmd requested by %s for draft_id=%s", uid, did)
+
     async with SessionLocal() as s:
         d: Optional[Draft] = await s.get(Draft, did)
     if not d:
+        log.warning("preview_cmd: draft not found id=%s", did)
         await update.message.reply_text("Драфт не знайдено.")
         return
 
@@ -78,6 +85,7 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await update.message.reply_photo(d.image_url, caption=caption, parse_mode="Markdown")
         except Exception:
+            log.exception("preview_cmd failed to send photo draft_id=%s", did)
             await update.message.reply_text(caption, parse_mode="Markdown")
     else:
         await update.message.reply_text(caption, parse_mode="Markdown")
@@ -98,18 +106,24 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Некоректний ID.")
         return
 
+    uid = update.effective_user.id if update.effective_user else None
+    log.info("approve_cmd requested by %s for draft_id=%s", uid, did)
+
     async with SessionLocal() as s:
         d: Optional[Draft] = await s.get(Draft, did)
         if not d:
+            log.warning("approve_cmd: draft not found id=%s", did)
             await update.message.reply_text("Драфт не знайдено.")
             return
         a: Optional[Article] = await s.get(Article, d.article_id)
         if not a:
+            log.warning("approve_cmd: article missing for draft id=%s article_id=%s", did, d.article_id)
             await update.message.reply_text("Статтю не знайдено.")
             return
 
         # Проверка «Рівень 1»
         if not a.level1_ok:
+            log.info("approve_cmd: level1 check failed for draft=%s article=%s", did, a.id)
             await update.message.reply_text("Відхилено: немає офіційного джерела (Рівень 1).")
             return
 
@@ -128,5 +142,6 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         d.approved = True
         await s.merge(d)
         await s.commit()
+        log.info("approve_cmd: draft=%s published by %s", did, uid)
 
     await update.message.reply_text("Опубліковано ✅")
