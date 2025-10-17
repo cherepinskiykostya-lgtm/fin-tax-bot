@@ -10,7 +10,7 @@ from jobs.fetch import run_ingest_cycle
 
 
 from settings import settings
-from handlers.base import start, help_cmd, ping, BOT_COMMANDS
+from handlers.base import start, help_cmd, ping
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
@@ -73,9 +73,6 @@ async def health():
 async def on_startup():
     await tg_app.initialize()
     await tg_app.start()
-
-    await tg_app.bot.set_my_commands(BOT_COMMANDS)
-    log.info("Bot commands menu initialized")
 
     # ЛОГ: показываем, каких админов увидели из переменных окружения
     log.info("Admin IDs loaded: %s", settings.admin_id_list)
