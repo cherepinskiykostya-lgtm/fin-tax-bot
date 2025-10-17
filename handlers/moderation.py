@@ -34,7 +34,7 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = (
             await s.execute(
                 select(Draft)
-                .where(Draft.approved == False)
+                .where(Draft.approved.isnot(True))
                 .order_by(Draft.id.desc())
                 .limit(5)
             )
