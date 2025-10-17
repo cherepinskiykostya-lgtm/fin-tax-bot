@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI, Request, HTTPException
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, filters
+from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -16,24 +16,27 @@ app = FastAPI(title="Telegram Bot on Railway")
 # --- Telegram Application ---
 tg_app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
 
-# --- Фильтр админов: если ADMIN_IDS задан, бот реагирует только на этих пользователей ---
-admin_filter = filters.User(user_id=settings.ADMIN_IDS) if settings.ADMIN_IDS else None
-
-if admin_filter:
-    tg_app.add_handler(CommandHandler("start", start, filters=admin_filter))
-    tg_app.add_handler(CommandHandler("help", help_cmd, filters=admin_filter))
-    tg_app.add_handler(CommandHandler("ping", ping, filters=admin_filter))
-else:
-    # Если список админов пуст — разрешаем всем (удобно для локальной отладки)
-    tg_app.add_handler(CommandHandler("start", start))
-    tg_app.add_handler(CommandHandler("help", help_cmd))
-    tg_app.add_handler(CommandHandler("ping", ping))
-
 # --- Scheduler ---
 scheduler = AsyncIOScheduler(timezone=settings.CRON_TZ)
 
 async def scheduled_job():
     log.info("Scheduled job tick")
+
+# --- Обёртка для проверки доступа ---
+async def admin_only(handler_func):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id if update.effective_user else None
+        if not user_id or user_id not in settings.ADMIN_IDS:
+            log.warning(f"⛔️ Access denied for user {user_id}")
+            await update.message.reply_text("Доступ запрещён.")
+            return
+        return await handler_func(update, context)
+    return wrapper
+
+# --- Обработчики команд только для админов ---
+tg_app.add_handler(CommandHandler("start", admin_only(start)))
+tg_app.add_handler(CommandHandler("help", admin_only(help_cmd)))
+tg_app.add_handler(CommandHandler("ping", admin_only(ping)))
 
 # --- Webhook endpoint ---
 @app.post(f"/webhook/{settings.WEBHOOK_SECRET}")
@@ -42,7 +45,6 @@ async def tg_webhook(request: Request):
         raise HTTPException(status_code=415, detail="Unsupported Media Type")
     data = await request.json()
     update = Update.de_json(data, tg_app.bot)
-    # PTB v21: Application должен быть запущен (initialize/start в startup-хуке)
     await tg_app.process_update(update)
     return {"ok": True}
 
@@ -72,13 +74,11 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    # Останавливаем планировщик
     try:
         scheduler.shutdown(wait=False)
     except Exception:
         pass
 
-    # Корректно останавливаем PTB Application
     try:
         await tg_app.stop()
         await tg_app.shutdown()
