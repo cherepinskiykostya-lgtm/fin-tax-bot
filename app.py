@@ -26,9 +26,9 @@ async def scheduled_job():
 def admin_only(handler_func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id if update.effective_user else None
-        admin_ids = settings.ADMIN_IDS  # <- получаем список int из settings
+        admin_ids = settings.admin_id_list
         if not user_id or user_id not in admin_ids:
-            log.warning(f"⛔️ Access denied for user {user_id}")
+            log.warning(f"⛔️ Access denied for user {user_id} (admins={admin_ids})")
             try:
                 if update.message:
                     await update.message.reply_text("Доступ запрещён.")
@@ -65,6 +65,9 @@ async def health():
 async def on_startup():
     await tg_app.initialize()
     await tg_app.start()
+
+    # ЛОГ: показываем, каких админов увидели из переменных окружения
+    log.info("Admin IDs loaded: %s", settings.admin_id_list)
 
     scheduler.add_job(scheduled_job, CronTrigger(minute="*/10"))
     scheduler.start()
