@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from fastapi import FastAPI, Request, HTTPException
 from telegram import Update
@@ -10,7 +11,7 @@ from jobs.fetch import run_ingest_cycle
 
 
 from settings import settings
-from handlers.base import start, help_cmd, ping
+from handlers.base import start, help_cmd, ping, BOT_COMMANDS
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
@@ -19,6 +20,7 @@ app = FastAPI(title="Telegram Bot on Railway")
 
 # --- Telegram Application ---
 tg_app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+_tg_event_loop: asyncio.AbstractEventLoop | None = None
 
 # --- Scheduler ---
 scheduler = AsyncIOScheduler(timezone=settings.CRON_TZ)
@@ -71,18 +73,21 @@ async def health():
 # --- Lifecycle: startup/shutdown ---
 @app.on_event("startup")
 async def on_startup():
+    global _tg_event_loop
     await tg_app.initialize()
     await tg_app.start()
+
+    await tg_app.bot.set_my_commands(BOT_COMMANDS)
+    log.info("Bot commands menu initialized")
+
+    _tg_event_loop = asyncio.get_running_loop()
 
     # ЛОГ: показываем, каких админов увидели из переменных окружения
     log.info("Admin IDs loaded: %s", settings.admin_id_list)
 
     scheduler.add_job(scheduled_job, CronTrigger(minute="*/10"))
     scheduler.start()
-    scheduler.add_job(
-        lambda: tg_app.create_task(run_ingest_cycle()),
-        CronTrigger(minute="*/30"),
-    )
+    scheduler.add_job(_schedule_ingest_cycle, CronTrigger(minute="*/30"))
 
     if settings.BASE_URL:
         url = f"{settings.BASE_URL}/webhook/{settings.WEBHOOK_SECRET}"
@@ -103,3 +108,18 @@ async def on_shutdown():
         await tg_app.shutdown()
     except Exception:
         pass
+
+    global _tg_event_loop
+    _tg_event_loop = None
+
+
+def _schedule_ingest_cycle():
+    """Schedule ingest cycle on the Telegram application's event loop."""
+    if not _tg_event_loop or _tg_event_loop.is_closed():
+        log.warning("Cannot schedule ingest cycle – Telegram loop is unavailable")
+        return
+
+    try:
+        asyncio.run_coroutine_threadsafe(run_ingest_cycle(), _tg_event_loop)
+    except RuntimeError:
+        log.exception("Failed to dispatch ingest cycle task")
