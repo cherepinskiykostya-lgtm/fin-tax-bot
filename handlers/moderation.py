@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 from telegram import Update, InputMediaPhoto
 from telegram.ext import ContextTypes
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from settings import settings
@@ -34,7 +34,12 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = (
             await s.execute(
                 select(Draft)
-                .where(Draft.approved == False)
+                .where(
+                    or_(
+                        Draft.approved.is_(False),
+                        Draft.approved.is_(None),
+                    )
+                )
                 .order_by(Draft.id.desc())
                 .limit(5)
             )
