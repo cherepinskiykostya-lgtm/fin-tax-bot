@@ -2,7 +2,7 @@ import logging
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urlparse, urlencode
+from urllib.parse import urlparse, urlencode, parse_qs
 
 import httpx
 import feedparser
@@ -46,6 +46,23 @@ SEED_RSS = [
     "https://tax.gov.ua/rss/",  # ДПС
     # при необходимости добавим ещё
 ]
+
+def _normalize_url(url: str) -> str:
+    """Unwrap helper redirects (e.g. Google News) to the original article URL."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+
+    host = parsed.netloc.lower()
+    if host.endswith("news.google.com"):
+        params = parse_qs(parsed.query)
+        for key in ("url", "u"):
+            target = params.get(key)
+            if target and target[0]:
+                return target[0]
+    return url
+
 
 def _domain(url: str) -> str:
     try:
@@ -106,26 +123,41 @@ def _extract_image(html: str) -> str | None:
     return None
 
 async def ingest_one(url: str, title: str, published: datetime | None, summary: str | None) -> str:
-    dom = _domain(url)
+    normalized_url = _normalize_url(url)
+    dom = _domain(normalized_url)
     lvl1 = _in_whitelist_lvl1(dom)
+
+    if not lvl1:
+        log.info(
+            "skip article not in level1 whitelist domain=%s url=%s original=%s",
+            dom,
+            normalized_url,
+            url,
+        )
+        return "skipped_level1"
 
     try:
         async with SessionLocal() as s:
-            exists = (await s.execute(select(Article.id).where(Article.url == url))).scalar_one_or_none()
+            candidates = tuple({normalized_url, url})
+            exists = (
+                await s.execute(
+                    select(Article.id).where(Article.url.in_(candidates))
+                )
+            ).scalar_one_or_none()
             if exists:
                 log.info("skip duplicate article url=%s existing_id=%s", url, exists)
                 return "duplicate"
 
             image_url = None
-            html = await _fetch_html(url)
+            html = await _fetch_html(normalized_url)
             if html:
                 image_url = _extract_image(html)
             else:
-                log.debug("no html content for %s", url)
+                log.debug("no html content for %s", normalized_url)
 
             art = Article(
-                title=title or url,
-                url=url,
+                title=title or normalized_url,
+                url=normalized_url,
                 source_domain=dom,
                 published_at=published,
                 summary=summary,
@@ -195,6 +227,12 @@ async def run_ingest_cycle():
                     else:
                         log.debug("entry without link in topic %s", topic)
     if results:
-        log.info("ingest cycle finished: created=%s duplicate=%s error=%s", results.get("created", 0), results.get("duplicate", 0), results.get("error", 0))
+        log.info(
+            "ingest cycle finished: created=%s duplicate=%s skipped_level1=%s error=%s",
+            results.get("created", 0),
+            results.get("duplicate", 0),
+            results.get("skipped_level1", 0),
+            results.get("error", 0),
+        )
     else:
         log.info("ingest cycle finished: no entries processed")
