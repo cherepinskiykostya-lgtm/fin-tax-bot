@@ -127,6 +127,15 @@ async def ingest_one(url: str, title: str, published: datetime | None, summary: 
     dom = _domain(normalized_url)
     lvl1 = _in_whitelist_lvl1(dom)
 
+    if not lvl1:
+        log.info(
+            "skip article not in level1 whitelist domain=%s url=%s original=%s",
+            dom,
+            normalized_url,
+            url,
+        )
+        return "skipped_level1"
+
     try:
         async with SessionLocal() as s:
             candidates = tuple({normalized_url, url})
@@ -218,6 +227,12 @@ async def run_ingest_cycle():
                     else:
                         log.debug("entry without link in topic %s", topic)
     if results:
-        log.info("ingest cycle finished: created=%s duplicate=%s error=%s", results.get("created", 0), results.get("duplicate", 0), results.get("error", 0))
+        log.info(
+            "ingest cycle finished: created=%s duplicate=%s skipped_level1=%s error=%s",
+            results.get("created", 0),
+            results.get("duplicate", 0),
+            results.get("skipped_level1", 0),
+            results.get("error", 0),
+        )
     else:
         log.info("ingest cycle finished: no entries processed")

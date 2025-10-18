@@ -5,7 +5,13 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from handlers.moderation import queue_cmd, preview_cmd, approve_cmd, articles_cmd
+from handlers.moderation import (
+    queue_cmd,
+    preview_cmd,
+    approve_cmd,
+    articles_cmd,
+    articles_reset_cmd,
+)
 from handlers.draft_make import make_cmd
 from jobs.fetch import run_ingest_cycle
 from db import init_models
@@ -56,6 +62,7 @@ tg_app.add_handler(CommandHandler("queue", queue_cmd))
 tg_app.add_handler(CommandHandler("preview", preview_cmd))
 tg_app.add_handler(CommandHandler("approve", approve_cmd))
 tg_app.add_handler(CommandHandler("make", make_cmd))
+tg_app.add_handler(CommandHandler("articles_reset", articles_reset_cmd))
 
 # --- Webhook endpoint ---
 @app.post(f"/webhook/{settings.WEBHOOK_SECRET}")

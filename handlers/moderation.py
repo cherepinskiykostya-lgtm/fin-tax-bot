@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 from telegram import Update
 from telegram.ext import ContextTypes
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from settings import settings
@@ -186,3 +186,18 @@ async def articles_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{art.title[:80]}{'…' if len(art.title) > 80 else ''}"
         )
     await update.message.reply_text("\n".join(lines))
+
+
+@admin_only
+async def articles_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Повністю очищає таблицю статей."""
+
+    uid = update.effective_user.id if update.effective_user else None
+    log.info("articles_reset_cmd requested by %s", uid)
+
+    async with SessionLocal() as s:  # type: AsyncSession
+        result = await s.execute(delete(Article))
+        await s.commit()
+
+    deleted = result.rowcount if result.rowcount is not None else 0
+    await update.message.reply_text(f"Базу статей очищено. Видалено записів: {deleted}.")
