@@ -2,7 +2,7 @@ import asyncio
 import logging
 from fastapi import FastAPI, Request, HTTPException
 from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from handlers.moderation import (
@@ -11,7 +11,6 @@ from handlers.moderation import (
     approve_cmd,
     articles_cmd,
     articles_reset_cmd,
-    queue_refresh_callback,
 )
 from handlers.draft_make import make_cmd
 from jobs.fetch import run_ingest_cycle
@@ -64,7 +63,6 @@ tg_app.add_handler(CommandHandler("preview", preview_cmd))
 tg_app.add_handler(CommandHandler("approve", approve_cmd))
 tg_app.add_handler(CommandHandler("make", make_cmd))
 tg_app.add_handler(CommandHandler("articles_reset", articles_reset_cmd))
-tg_app.add_handler(CallbackQueryHandler(queue_refresh_callback, pattern="^refresh_news$"))
 
 # --- Webhook endpoint ---
 @app.post(f"/webhook/{settings.WEBHOOK_SECRET}")
