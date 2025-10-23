@@ -1,6 +1,6 @@
 import logging
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from urllib.parse import urlparse, urlencode, parse_qs
 
@@ -73,7 +73,7 @@ def _domain(url: str) -> str:
 def _in_whitelist_lvl1(domain: str) -> bool:
     return any(domain.endswith(d.strip()) for d in settings.whitelist_level1)
 
-async def _fetch_html(url: str) -> str | None:
+async def _fetch_html(url: str, failed_sources: set[str] | None = None) -> str | None:
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=20, headers=REQUEST_HEADERS) as client:
             log.debug("fetching html: %s", url)
@@ -81,26 +81,40 @@ async def _fetch_html(url: str) -> str | None:
             if r.status_code == 200 and r.text:
                 return r.text
             log.warning("html fetch failed %s: status=%s", url, r.status_code)
+            if failed_sources is not None:
+                failed_sources.add(_domain(url) or url)
     except Exception as exc:
         log.warning("html fetch exception %s: %s", url, exc)
+        if failed_sources is not None:
+            failed_sources.add(_domain(url) or url)
         return None
     return None
 
 
-async def _load_feed(client: httpx.AsyncClient, url: str) -> Optional[feedparser.FeedParserDict]:
+async def _load_feed(
+    client: httpx.AsyncClient,
+    url: str,
+    failed_sources: set[str] | None = None,
+) -> Optional[feedparser.FeedParserDict]:
     try:
         response = await client.get(url)
     except httpx.HTTPError as exc:
         log.warning("Feed fetch error %s: %s", url, exc)
+        if failed_sources is not None:
+            failed_sources.add(url)
         return None
 
     if response.status_code != httpx.codes.OK:
         log.warning("Feed fetch failed %s: HTTP %s", url, response.status_code)
+        if failed_sources is not None:
+            failed_sources.add(url)
         return None
 
     final_host = response.url.host or ""
     if "consent.google.com" in final_host:
         log.warning("Google News feed requires consent, skipping: %s", url)
+        if failed_sources is not None:
+            failed_sources.add(url)
         return None
 
     parsed = feedparser.parse(response.content)
@@ -122,7 +136,13 @@ def _extract_image(html: str) -> str | None:
         return None
     return None
 
-async def ingest_one(url: str, title: str, published: datetime | None, summary: str | None) -> str:
+async def ingest_one(
+    url: str,
+    title: str,
+    published: datetime | None,
+    summary: str | None,
+    failed_sources: set[str] | None = None,
+) -> str:
     normalized_url = _normalize_url(url)
     dom = _domain(normalized_url)
     lvl1 = _in_whitelist_lvl1(dom)
@@ -149,11 +169,13 @@ async def ingest_one(url: str, title: str, published: datetime | None, summary: 
                 return "duplicate"
 
             image_url = None
-            html = await _fetch_html(normalized_url)
+            html = await _fetch_html(normalized_url, failed_sources=failed_sources)
             if html:
                 image_url = _extract_image(html)
             else:
                 log.debug("no html content for %s", normalized_url)
+                if failed_sources is not None:
+                    failed_sources.add(dom or normalized_url)
 
             art = Article(
                 title=title or normalized_url,
@@ -180,9 +202,22 @@ async def ingest_one(url: str, title: str, published: datetime | None, summary: 
         log.exception("failed to ingest article url=%s", url)
         return "error"
 
+def _entry_published(entry) -> datetime | None:
+    for attr in ("published_parsed", "updated_parsed"):
+        parsed = getattr(entry, attr, None)
+        if parsed:
+            try:
+                return datetime(*parsed[:6], tzinfo=timezone.utc)
+            except Exception:
+                return None
+    return None
+
+
 async def run_ingest_cycle():
     log.info("starting ingest cycle")
     results: Counter[str] = Counter()
+    failed_sources: set[str] = set()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
 
     # 1) RSS seed
     for feed_url in SEED_RSS:
@@ -193,16 +228,21 @@ async def run_ingest_cycle():
                 link = getattr(e, "link", None)
                 title = getattr(e, "title", "")
                 summary = getattr(e, "summary", None)
-                published = None
-                if getattr(e, "published_parsed", None):
-                    published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
+                published = _entry_published(e)
+                if not published:
+                    results["skipped_no_date"] += 1
+                    continue
+                if published < cutoff:
+                    results["skipped_old"] += 1
+                    continue
                 if link:
-                    status = await ingest_one(link, title, published, summary)
+                    status = await ingest_one(link, title, published, summary, failed_sources=failed_sources)
                     results[status] += 1
                 else:
                     log.debug("entry without link in feed %s", feed_url)
         except Exception as e:
             log.warning("RSS error %s: %s", feed_url, e)
+            failed_sources.add(feed_url)
 
     # 2) Google News
     if settings.ENABLE_GOOGLE_NEWS:
@@ -211,28 +251,38 @@ async def run_ingest_cycle():
             for topic, q in TOPIC_QUERIES.items():
                 params = {"q": q, "hl": "uk", "gl": "UA", "ceid": "UA:uk"}
                 url = base + urlencode(params)
-                fp = await _load_feed(client, url)
+                fp = await _load_feed(client, url, failed_sources=failed_sources)
                 if not fp:
                     continue
                 for e in fp.entries[:20]:
                     link = getattr(e, "link", None)
                     title = getattr(e, "title", "")
                     summary = getattr(e, "summary", None)
-                    published = None
-                    if getattr(e, "published_parsed", None):
-                        published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
+                    published = _entry_published(e)
+                    if not published:
+                        results["skipped_no_date"] += 1
+                        continue
+                    if published < cutoff:
+                        results["skipped_old"] += 1
+                        continue
                     if link:
-                        status = await ingest_one(link, title, published, summary)
+                        status = await ingest_one(link, title, published, summary, failed_sources=failed_sources)
                         results[status] += 1
                     else:
                         log.debug("entry without link in topic %s", topic)
     if results:
         log.info(
-            "ingest cycle finished: created=%s duplicate=%s skipped_level1=%s error=%s",
+            "ingest cycle finished: created=%s duplicate=%s skipped_level1=%s error=%s "
+            "skipped_old=%s skipped_no_date=%s",
             results.get("created", 0),
             results.get("duplicate", 0),
             results.get("skipped_level1", 0),
             results.get("error", 0),
+            results.get("skipped_old", 0),
+            results.get("skipped_no_date", 0),
         )
     else:
         log.info("ingest cycle finished: no entries processed")
+    if failed_sources:
+        log.warning("ingest cycle had unavailable sources: %s", ", ".join(sorted(failed_sources)))
+    return {"results": results, "failed_sources": sorted(failed_sources)}

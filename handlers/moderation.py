@@ -1,6 +1,6 @@
 import logging
 from typing import Optional
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from sqlalchemy import select, or_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from settings import settings
 from db.session import SessionLocal
 from db.models import Article, Draft
+from jobs.fetch import run_ingest_cycle
 
 log = logging.getLogger("bot")
 
@@ -32,6 +33,9 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     uid = update.effective_user.id if update.effective_user else None
     log.info("queue_cmd requested by %s", uid)
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔄 Оновити новини", callback_data="refresh_news")]]
+    )
     async with SessionLocal() as s:  # type: AsyncSession
         rows = (
             await s.execute(
@@ -49,7 +53,7 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ).all()
     if not rows:
         log.info("queue_cmd: no drafts found")
-        await update.message.reply_text("Черга порожня.")
+        await update.message.reply_text("Черга порожня.", reply_markup=keyboard)
         return
     text = "Останні драфти (неопубліковані):\n"
     for draft, article in rows:
@@ -57,7 +61,43 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"- ID {draft.id} → стаття {article.id} | {article.source_domain} | "
             f"{article.title[:80]}{'…' if len(article.title) > 80 else ''}\n"
         )
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, reply_markup=keyboard)
+
+
+@admin_only
+async def queue_refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer("Сканування розпочато…", show_alert=False)
+
+    summary = await run_ingest_cycle()
+    results = summary.get("results", {})
+    failed_sources = summary.get("failed_sources", [])
+
+    lines = ["🔄 Сканування завершено."]
+    lines.append(
+        "Статистика: "
+        f"нових {results.get('created', 0)}, "
+        f"дублікатів {results.get('duplicate', 0)}, "
+        f"L1-відхилень {results.get('skipped_level1', 0)}, "
+        f"помилок {results.get('error', 0)}, "
+        f"старих {results.get('skipped_old', 0)}, "
+        f"без дати {results.get('skipped_no_date', 0)}"
+    )
+
+    if failed_sources:
+        lines.append("Недоступні ресурси:")
+        lines.extend(f"- {src}" for src in failed_sources)
+    else:
+        lines.append("Усі ресурси були доступні ✅")
+
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔄 Оновити новини", callback_data="refresh_news")]]
+    )
+    target_message = query.message
+    if target_message:
+        await target_message.reply_text("\n".join(lines), reply_markup=keyboard)
 
 
 @admin_only
