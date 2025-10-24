@@ -15,6 +15,10 @@ from db.session import SessionLocal
 from db.models import Article
 from jobs.nbu_scraper import fetch_nbu_news, NBU_NEWS_URL
 from jobs.tax_scraper import fetch_tax_news, TAX_NEWS_URL
+from jobs.tax_fetcher import (
+    HTTP2_SUPPORTED,
+    fetch_taxgov_html,
+)
 from services.summary import choose_summary, normalize_text
 from services.nbu_article import (
     extract_body_fallback_generic,
@@ -107,11 +111,15 @@ async def _fetch_html(
     failed_sources: set[str] | None = None,
     headers: dict[str, str] | None = None,
 ) -> str | None:
+    if "tax.gov.ua" in url:
+        return await fetch_taxgov_html(url, failed_sources=failed_sources)
+
     try:
         async with httpx.AsyncClient(
             follow_redirects=True,
             timeout=20,
             headers=headers or REQUEST_HEADERS_HTML,
+            http2=HTTP2_SUPPORTED,
         ) as client:
             log.debug("fetching html: %s", url)
             r = await client.get(url)
