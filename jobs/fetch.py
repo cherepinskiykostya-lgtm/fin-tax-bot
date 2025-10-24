@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from settings import settings
 from db.session import SessionLocal
 from db.models import Article
+from jobs.nbu_scraper import fetch_nbu_news, NBU_NEWS_URL
 
 log = logging.getLogger("bot")
 
@@ -278,7 +279,38 @@ async def run_ingest_cycle():
             failed_sources.add(key)
             resource_info["available"] = False
 
-    # 2) Google News
+    # 2) NBU HTML news source
+    key, label = _resource_key_label("nbu:html", default_label="NBU News (HTML)")
+    resource_info = ensure_resource(key, label)
+    try:
+        log.info("processing NBU news page %s", NBU_NEWS_URL)
+        nbu_items = await fetch_nbu_news()
+        if not nbu_items:
+            resource_info["available"] = False
+        for item in nbu_items:
+            published = getattr(item, "published", None)
+            if not published:
+                results["skipped_no_date"] += 1
+                continue
+            if published < cutoff:
+                results["skipped_old"] += 1
+                continue
+            status = await ingest_one(
+                item.url,
+                getattr(item, "title", ""),
+                published,
+                getattr(item, "summary", None),
+                failed_sources=failed_sources,
+            )
+            results[status] += 1
+            if status == "created":
+                resource_info["created"] = int(resource_info["created"]) + 1
+    except Exception:
+        log.exception("NBU scraper error")
+        resource_info["available"] = False
+        failed_sources.add("bank.gov.ua")
+
+    # 3) Google News
     if settings.ENABLE_GOOGLE_NEWS:
         base = "https://news.google.com/rss/search?"
         async with httpx.AsyncClient(follow_redirects=True, timeout=20, headers=REQUEST_HEADERS) as client:
