@@ -1,5 +1,6 @@
 import logging
 import re
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -7,6 +8,7 @@ from telegram.ext import ContextTypes
 from settings import settings
 from db.session import SessionLocal
 from db.models import Article, Draft, DraftPreview
+from services.post_sections import split_post_sections
 from services.previews import build_preview_variants
 from services.utm import with_utm
 
@@ -105,6 +107,9 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ua = ua.strip()
 
+        sections = split_post_sections(ua)
+        long_post = sections.long.strip()
+
         tags = BASE_TAGS
         tag_line = re.search(r"^Теги:\s*(.+)$", ua, flags=re.MULTILINE)
         if tag_line:
@@ -121,8 +126,9 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     tags = " ".join(candidate.split())
             ua = re.sub(r"^Теги:.*$", "", ua, flags=re.MULTILINE).strip()
 
+        body_core = long_post or ua
         title_line = f"**{a.title.strip()}**"
-        body_md = f"{title_line}\n\n{ua}" if ua else title_line
+        body_md = f"{title_line}\n\n{body_core.strip()}" if body_core.strip() else title_line
 
         # Собираем блок «Джерела» и теги
         link_with_utm = with_utm(a.url)
