@@ -345,7 +345,7 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
     tags_line = _escape_text(tags.strip())
     subscribe_block = (
         f"<a href=\"{_escape_attr(SUBSCRIBE_PROMO_URL)}\">"
-        f"<b>{_escape_text(SUBSCRIBE_PROMO_TEXT)}</b>"
+        f"{_escape_text(SUBSCRIBE_PROMO_TEXT)}"
         "</a>"
     )
 
