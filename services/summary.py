@@ -8,12 +8,37 @@ from selectolax.parser import HTMLParser
 from services.article_text import extract_article_text
 
 
+def _normalize_paragraphs(text: str) -> str:
+    paragraphs: list[str] = []
+    buffer: list[str] = []
+
+    def flush_buffer() -> None:
+        if buffer:
+            paragraph = " ".join(buffer).strip()
+            if paragraph:
+                paragraphs.append(paragraph)
+            buffer.clear()
+
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            flush_buffer()
+            continue
+        buffer.append(" ".join(stripped.split()))
+
+    flush_buffer()
+
+    if not paragraphs:
+        return ""
+
+    return "\n\n".join(paragraphs).strip()
+
+
 def normalize_text(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
     if isinstance(value, str):
-        lines = [" ".join(segment.split()).strip() for segment in value.splitlines()]
-        normalized = "\n".join(filter(None, lines)).strip()
+        normalized = _normalize_paragraphs(value)
     else:
         normalized = " ".join(str(value).split()).strip()
     return normalized or None

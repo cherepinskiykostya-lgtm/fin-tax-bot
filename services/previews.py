@@ -7,6 +7,9 @@ from typing import Dict, List, Tuple
 PREVIEW_WITH_IMAGE = "with_image"
 PREVIEW_WITHOUT_IMAGE = "without_image"
 
+SUBSCRIBE_PROMO_TEXT = "Підпишись на IT Tax Radar"
+SUBSCRIBE_PROMO_URL = "https://t.me/ITTaxRadar"
+
 _SENTENCE_ENDINGS = (".", "!", "?", "…")
 
 
@@ -68,6 +71,16 @@ def _smart_trim(text: str, limit: int) -> str:
 def _join_blocks(*blocks: str) -> str:
     filtered = [block.strip() for block in blocks if block and block.strip()]
     return "\n\n".join(filtered)
+
+
+def _append_block(base: str, block: str) -> str:
+    base = base.strip()
+    block = block.strip()
+    if not base:
+        return block
+    if not block:
+        return base
+    return f"{base}\n\n{block}"
 
 
 def _escape_text(text: str) -> str:
@@ -295,6 +308,34 @@ def _truncate_html_preserving_tags(text: str, limit: int) -> str:
     return truncated[:limit]
 
 
+def _truncate_before_subscribe(main_text: str, subscribe_block: str, total_limit: int) -> str:
+    subscribe = subscribe_block.strip()
+    if not subscribe:
+        return _truncate_html_preserving_tags(main_text, total_limit)
+
+    main = main_text.strip()
+    if not main:
+        return _truncate_html_preserving_tags(subscribe_block, total_limit)
+
+    joiner_len = 2
+    available_for_main = total_limit - len(subscribe) - joiner_len
+    if available_for_main < 0:
+        return _truncate_html_preserving_tags(subscribe_block, total_limit)
+
+    truncated_main = _truncate_html_preserving_tags(main, available_for_main)
+    result = _append_block(truncated_main, subscribe_block)
+    if len(result) <= total_limit:
+        return result
+
+    overflow = len(result) - total_limit
+    truncated_main = _truncate_html_preserving_tags(truncated_main, max(available_for_main - overflow, 0))
+    result = _append_block(truncated_main, subscribe_block)
+    if len(result) <= total_limit:
+        return result
+
+    return _truncate_html_preserving_tags(subscribe_block, total_limit)
+
+
 def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: str) -> Dict[str, str]:
     """Return HTML strings for both preview types."""
     header = f"<b>{_escape_text(title.strip())}</b>"
@@ -302,8 +343,20 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
     review_without_title = _drop_leading_title(review_clean, title)
     link_line = f"<a href=\"{_escape_attr(link_url)}\">читати далі</a>"
     tags_line = _escape_text(tags.strip())
+    subscribe_block = (
+        f"<a href=\"{_escape_attr(SUBSCRIBE_PROMO_URL)}\">"
+        f"<b>{_escape_text(SUBSCRIBE_PROMO_TEXT)}</b>"
+        "</a>"
+    )
 
-    base_without_review = _join_blocks(header, link_line, tags_line)
+    base_without_review = _append_block(
+        _join_blocks(
+            header,
+            link_line,
+            tags_line,
+        ),
+        subscribe_block,
+    )
     available_for_review_with_image = 1024 - len(base_without_review) - len("\n\n")
     available_for_review_without_image = 4096 - len(base_without_review) - len("\n\n")
 
@@ -312,11 +365,51 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
         while True:
             review_candidate_md = _smart_trim(review_without_title, limit)
             review_candidate_html = _markdown_to_telegram_html(review_candidate_md)
-            text_candidate = _join_blocks(header, review_candidate_html, link_line, tags_line)
+            main_text = _join_blocks(
+                header,
+                review_candidate_html,
+                link_line,
+                tags_line,
+            )
+            text_candidate = _append_block(main_text, subscribe_block)
             if len(text_candidate) <= total_limit or limit <= 0:
-                if len(text_candidate) > total_limit:
-                    text_candidate = _truncate_html_preserving_tags(text_candidate, total_limit)
-                return text_candidate
+                if len(text_candidate) <= total_limit:
+                    return text_candidate
+                if limit > 0:
+                    overflow = len(text_candidate) - total_limit
+                    limit = max(limit - max(overflow, 1), 0)
+                    continue
+
+                if tags_line:
+                    tags_tokens = tags_line.split()
+                    while tags_tokens:
+                        tags_tokens.pop()
+                        candidate_tags = " ".join(tags_tokens)
+                        main_text = _join_blocks(
+                            header,
+                            review_candidate_html,
+                            link_line,
+                            candidate_tags,
+                        )
+                        text_candidate = _append_block(main_text, subscribe_block)
+                        if len(text_candidate) <= total_limit:
+                            return text_candidate
+
+                    main_text = _join_blocks(
+                        header,
+                        review_candidate_html,
+                        link_line,
+                    )
+                    text_candidate = _append_block(main_text, subscribe_block)
+                    if len(text_candidate) <= total_limit:
+                        return text_candidate
+
+                main_text = _join_blocks(
+                    header,
+                    review_candidate_html,
+                    link_line,
+                )
+                return _truncate_before_subscribe(main_text, subscribe_block, total_limit)
             overflow = len(text_candidate) - total_limit
             limit = max(limit - max(overflow, 1), 0)
 
