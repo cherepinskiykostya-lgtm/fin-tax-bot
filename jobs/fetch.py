@@ -14,7 +14,6 @@ from settings import settings
 from db.session import SessionLocal
 from db.models import Article
 from jobs.nbu_scraper import fetch_nbu_news, NBU_NEWS_URL
-from services.summary import choose_summary, normalize_text
 
 log = logging.getLogger("bot")
 
@@ -156,7 +155,6 @@ def _extract_image(html: str) -> str | None:
         return None
     return None
 
-
 async def ingest_one(
     url: str,
     title: str,
@@ -191,22 +189,19 @@ async def ingest_one(
 
             image_url = None
             html = await _fetch_html(normalized_url, failed_sources=failed_sources)
-            summary_candidate = summary
             if html:
                 image_url = _extract_image(html)
-                summary_candidate = choose_summary(title or "", summary_candidate, html)
             else:
                 log.debug("no html content for %s", normalized_url)
                 if failed_sources is not None:
                     failed_sources.add(dom or normalized_url)
 
-            summary_text = normalize_text(summary_candidate)
             art = Article(
                 title=title or normalized_url,
                 url=normalized_url,
                 source_domain=dom,
                 published_at=published,
-                summary=summary_text,
+                summary=summary,
                 image_url=image_url,
                 level1_ok=lvl1,
                 topics=None,
