@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import httpx
+import pytest
 
 from jobs.tax_scraper import (
     TAX_NEWS_URL,
@@ -55,34 +55,37 @@ def test_parse_tax_news_returns_items():
     assert ld.published == datetime(2024, 10, 5, 6, 30, tzinfo=timezone.utc)
 
 
-def test_fetch_tax_news_uses_client_mock():
+def test_fetch_tax_news_uses_tax_fetcher(monkeypatch: pytest.MonkeyPatch):
     html = FIXTURE_PATH.read_text(encoding="utf-8")
+    attempts: list[str] = []
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == TAX_NEWS_URL
-        return httpx.Response(200, text=html)
+    async def fake_fetch(url: str, failed_sources=None):  # type: ignore[unused-ignore]
+        attempts.append(url)
+        return html if len(attempts) == 1 else None
 
-    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr("jobs.tax_scraper.fetch_taxgov_html", fake_fetch)
 
-    async def run() -> list[TaxNewsItem]:
-        async with httpx.AsyncClient(transport=transport) as client:
-            return await fetch_tax_news(client=client)
-
-    items = asyncio.run(run())
+    items = asyncio.run(fetch_tax_news())
 
     assert len(items) == 4
+    assert attempts[0] == TAX_NEWS_URL
 
 
-def test_fetch_tax_news_handles_error_status():
-    async def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="")
+def test_fetch_tax_news_handles_failure(monkeypatch: pytest.MonkeyPatch):
+    attempts: list[str] = []
 
-    transport = httpx.MockTransport(handler)
+    async def fake_fetch(url: str, failed_sources=None):  # type: ignore[unused-ignore]
+        attempts.append(url)
+        return None
 
-    async def run() -> list[TaxNewsItem]:
-        async with httpx.AsyncClient(transport=transport) as client:
-            return await fetch_tax_news(client=client)
+    monkeypatch.setattr("jobs.tax_scraper.fetch_taxgov_html", fake_fetch)
 
-    items = asyncio.run(run())
+    items = asyncio.run(fetch_tax_news())
 
     assert items == []
+    assert attempts == [
+        TAX_NEWS_URL,
+        TAX_NEWS_URL.rstrip("/"),
+        "https://www.tax.gov.ua/media-tsentr/novini",
+        "https://www.tax.gov.ua/media-tsentr/",
+    ]

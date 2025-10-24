@@ -8,23 +8,15 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator, List
 from urllib.parse import urljoin, urlparse
 
-import httpx
 from selectolax.parser import HTMLParser, Node
 
 from services.ukrainian_dates import KYIV_TZ, parse_ukrainian_date
+from jobs.tax_fetcher import fetch_taxgov_html
 
 log = logging.getLogger("bot")
 
-TAX_NEWS_URL = "https://tax.gov.ua/media-tsentr/novini/"
+TAX_NEWS_URL = "https://www.tax.gov.ua/media-tsentr/novini/"
 BASE_URL = "https://tax.gov.ua"
-
-REQUEST_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
-}
-
 
 @dataclass(slots=True)
 class TaxNewsItem:
@@ -269,29 +261,28 @@ def parse_tax_news(html: str, now: datetime | None = None) -> List[TaxNewsItem]:
     return items
 
 
-async def fetch_tax_news(client: httpx.AsyncClient | None = None) -> List[TaxNewsItem]:
-    close_client = False
-    if client is None:
-        client = httpx.AsyncClient(
-            headers=REQUEST_HEADERS,
-            timeout=20,
-            follow_redirects=True,
-        )
-        close_client = True
+async def fetch_tax_news(client: None | Any = None) -> List[TaxNewsItem]:
+    del client  # maintained for backwards compatibility with call sites
 
-    try:
-        response = await client.get(TAX_NEWS_URL)
-        if response.status_code != 200:
-            log.warning("tax news fetch status %s", response.status_code)
-            return []
-        reference_now = datetime.now(KYIV_TZ)
-        return parse_tax_news(response.text, now=reference_now)
-    except Exception:
-        log.exception("tax news fetch error")
+    candidates = [
+        TAX_NEWS_URL,
+        TAX_NEWS_URL.rstrip("/"),
+        "https://www.tax.gov.ua/media-tsentr/novini",
+        "https://www.tax.gov.ua/media-tsentr/",
+    ]
+
+    html_text: str | None = None
+    for candidate in candidates:
+        html_text = await fetch_taxgov_html(candidate)
+        if html_text:
+            break
+
+    if not html_text:
+        log.warning("tax news fetch failed after staged retries")
         return []
-    finally:
-        if close_client:
-            await client.aclose()
+
+    reference_now = datetime.now(KYIV_TZ)
+    return parse_tax_news(html_text, now=reference_now)
 
 
 __all__ = ["TaxNewsItem", "fetch_tax_news", "parse_tax_news", "TAX_NEWS_URL"]
