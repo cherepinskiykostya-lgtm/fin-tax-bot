@@ -1,5 +1,4 @@
 import logging
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -29,7 +28,7 @@ def admin_only(func):
 TAGS = "#PillarTwo #CFC #CRS #BO #WHT #IPBox #TP #DiiaCity #NBU #UkraineTax #IT"
 DISCLAIMER = "Матеріал має інформативний характер і не є податковою/юридичною консультацією."
 
-PROMPT = """Ти редактор новин з міжнародного оподаткування. Стисло (600–900 символів українською) сформуй повідомлення для Telegram за шаблоном Markdown:
+PROMPT = """Ти редактор новин з міжнародного оподаткування. Розгорнуто (1200–2000 символів українською) сформуй повідомлення для Telegram за шаблоном Markdown:
 🧭 [ТЕМА] Країна/Орган — коротко
 Що сталося: 1–2 речення.
 Чому важливо (IT/CFO): 1–2 буліти.
@@ -37,10 +36,13 @@ PROMPT = """Ти редактор новин з міжнародного опо�
 Наприкінці не додавай посилання та теги, тільки текст повідомлення. Тон: нейтрально-експертний, без юрпорад. Ось вихідні дані (заголовок, короткий зміст, URL): 
 """
 
-async def _llm_rewrite_ua(text: str) -> str:
+MAX_REWRITE_LENGTH = 3800
+
+
+async def _llm_rewrite_ua(prompt: str, article_payload: str) -> str:
     if not settings.OPENAI_API_KEY:
         # фоллбек — просто вернём текст
-        return text[:900]
+        return article_payload[:MAX_REWRITE_LENGTH]
     try:
         import openai  # type: ignore
         openai.api_key = settings.OPENAI_API_KEY
@@ -48,15 +50,15 @@ async def _llm_rewrite_ua(text: str) -> str:
         completion = openai.ChatCompletion.create(
             model=settings.OPENAI_MODEL,
             messages=[
-                {"role": "system", "content": "You are a tax news editor writing concise Ukrainian summaries."},
-                {"role": "user", "content": text},
+                {"role": "system", "content": "You are a tax news editor writing structured Ukrainian summaries."},
+                {"role": "user", "content": prompt + article_payload},
             ],
             temperature=0.3,
         )
-        return completion.choices[0].message["content"][:1200]
+        return completion.choices[0].message["content"][:MAX_REWRITE_LENGTH]
     except Exception as exc:
         log.warning("llm rewrite failed, fallback to original text: %s", exc)
-        return text[:900]
+        return article_payload[:MAX_REWRITE_LENGTH]
 
 @admin_only
 async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -90,7 +92,19 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Готовим ввод для LLM
         base_text = f"{a.title}\n\n{(a.summary or '')}\n\n{a.url}"
-        ua = await _llm_rewrite_ua(PROMPT + base_text)
+        ua = await _llm_rewrite_ua(PROMPT, base_text)
+
+        ua = ua.strip()
+        if "Чому важливо (IT/CFO):" in ua:
+            lines = []
+            for line in ua.splitlines():
+                if line.startswith("Чому важливо (IT/CFO):") and lines and lines[-1] != "":
+                    lines.append("")
+                lines.append(line)
+            ua = "\n".join(lines).strip()
+
+        title_line = f"**{a.title.strip()}**"
+        body_md = f"{title_line}\n\n{ua}" if ua else title_line
 
         # Собираем блок «Джерела» и теги
         link_with_utm = with_utm(a.url)
@@ -99,7 +113,7 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         d = Draft(
             article_id=a.id,
-            body_md=ua.strip(),
+            body_md=body_md.strip(),
             sources_md=src_md,
             tags=tags,
             image_url=a.image_url,
