@@ -130,7 +130,12 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption = d.body_md + "\n\n" + d.sources_md + "\n\n" + d.tags
     if d.image_url:
         try:
-            await update.message.reply_photo(d.image_url, caption=caption, parse_mode="Markdown")
+            if len(caption) <= 1024:
+                await update.message.reply_photo(d.image_url, caption=caption, parse_mode="Markdown")
+            else:
+                log.info("preview_cmd: caption too long, sending separately draft_id=%s", did)
+                await update.message.reply_photo(d.image_url)
+                await update.message.reply_text(caption, parse_mode="Markdown")
         except Exception:
             log.exception("preview_cmd failed to send photo draft_id=%s", did)
             await update.message.reply_text(caption, parse_mode="Markdown")
@@ -178,7 +183,24 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = d.body_md + "\n\n" + d.sources_md + "\n\n" + d.tags
         try:
             if d.image_url:
-                await context.bot.send_photo(chat_id=settings.CHANNEL_ID, photo=d.image_url, caption=caption, parse_mode="Markdown")
+                if len(caption) <= 1024:
+                    await context.bot.send_photo(
+                        chat_id=settings.CHANNEL_ID,
+                        photo=d.image_url,
+                        caption=caption,
+                        parse_mode="Markdown",
+                    )
+                else:
+                    log.info("approve_cmd: caption too long, sending separately draft_id=%s", did)
+                    await context.bot.send_photo(
+                        chat_id=settings.CHANNEL_ID,
+                        photo=d.image_url,
+                    )
+                    await context.bot.send_message(
+                        chat_id=settings.CHANNEL_ID,
+                        text=caption,
+                        parse_mode="Markdown",
+                    )
             else:
                 await context.bot.send_message(chat_id=settings.CHANNEL_ID, text=caption, parse_mode="Markdown")
         except Exception as e:
