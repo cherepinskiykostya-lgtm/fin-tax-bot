@@ -8,23 +8,17 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator, List
 from urllib.parse import urljoin, urlparse
 
-import httpx
+from collections.abc import Awaitable, Callable
+
 from selectolax.parser import HTMLParser, Node
 
 from services.ukrainian_dates import KYIV_TZ, parse_ukrainian_date
+from jobs.staged_fetch import staged_fetch_html
 
 log = logging.getLogger("bot")
 
 TAX_NEWS_URL = "https://tax.gov.ua/media-tsentr/novini/"
 BASE_URL = "https://tax.gov.ua"
-
-REQUEST_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
-}
-
 
 @dataclass(slots=True)
 class TaxNewsItem:
@@ -269,29 +263,23 @@ def parse_tax_news(html: str, now: datetime | None = None) -> List[TaxNewsItem]:
     return items
 
 
-async def fetch_tax_news(client: httpx.AsyncClient | None = None) -> List[TaxNewsItem]:
-    close_client = False
-    if client is None:
-        client = httpx.AsyncClient(
-            headers=REQUEST_HEADERS,
-            timeout=20,
-            follow_redirects=True,
-        )
-        close_client = True
+FetchCallable = Callable[[str], Awaitable[str | None]]
 
+
+async def fetch_tax_news(fetcher: FetchCallable | None = None) -> List[TaxNewsItem]:
+    fetch_html = fetcher or staged_fetch_html
     try:
-        response = await client.get(TAX_NEWS_URL)
-        if response.status_code != 200:
-            log.warning("tax news fetch status %s", response.status_code)
-            return []
-        reference_now = datetime.now(KYIV_TZ)
-        return parse_tax_news(response.text, now=reference_now)
+        html = await fetch_html(TAX_NEWS_URL)
     except Exception:
         log.exception("tax news fetch error")
         return []
-    finally:
-        if close_client:
-            await client.aclose()
+
+    if not html:
+        log.warning("tax news fetch status no content after staged retries")
+        return []
+
+    reference_now = datetime.now(KYIV_TZ)
+    return parse_tax_news(html, now=reference_now)
 
 
 __all__ = ["TaxNewsItem", "fetch_tax_news", "parse_tax_news", "TAX_NEWS_URL"]
