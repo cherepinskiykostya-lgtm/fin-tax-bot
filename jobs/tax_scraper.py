@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import logging
 import re
@@ -21,29 +20,10 @@ BASE_URL = "https://tax.gov.ua"
 
 REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-    ),
-    "Accept-Language": "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Cache-Control": "max-age=0",
-    "Pragma": "no-cache",
-    "Connection": "keep-alive",
-    "Referer": "https://tax.gov.ua/",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-User": "?1",
-    "sec-ch-ua": '"Chromium";v="123", "Not(A:Brand";v="24", "Google Chrome";v="123"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Linux"',
-    "Priority": "u=0, i",
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
 }
-
-HTTP2_SUPPORTED = importlib.util.find_spec("h2") is not None
 
 
 @dataclass(slots=True)
@@ -296,12 +276,11 @@ async def fetch_tax_news(client: httpx.AsyncClient | None = None) -> List[TaxNew
             headers=REQUEST_HEADERS,
             timeout=20,
             follow_redirects=True,
-            http2=HTTP2_SUPPORTED,
         )
         close_client = True
 
     try:
-        response = await client.get(TAX_NEWS_URL, headers=REQUEST_HEADERS)
+        response = await client.get(TAX_NEWS_URL)
         if response.status_code != 200:
             log.warning("tax news fetch status %s", response.status_code)
             return []
