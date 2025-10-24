@@ -1,3 +1,4 @@
+import importlib.util
 import logging
 from collections import Counter
 from datetime import datetime, timezone, timedelta
@@ -36,6 +37,25 @@ REQUEST_HEADERS_HTML = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": REQUEST_HEADERS.get("Accept-Language", "uk-UA,uk;q=0.9,en;q=0.8"),
 }
+
+REQUEST_HEADERS_BROWSER = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+}
+
+HTTP2_SUPPORTED = importlib.util.find_spec("h2") is not None
 
 TOPIC_QUERIES = {
     "PillarTwo": '("Pillar Two" OR GloBE OR BEPS) site:oecd.org OR site:europa.eu OR site:eur-lex.europa.eu',
@@ -107,11 +127,15 @@ async def _fetch_html(
     failed_sources: set[str] | None = None,
     headers: dict[str, str] | None = None,
 ) -> str | None:
+    if "tax.gov.ua" in url:
+        return await _fetch_taxgov_html(url, failed_sources=failed_sources, headers=headers)
+
     try:
         async with httpx.AsyncClient(
             follow_redirects=True,
             timeout=20,
             headers=headers or REQUEST_HEADERS_HTML,
+            http2=HTTP2_SUPPORTED,
         ) as client:
             log.debug("fetching html: %s", url)
             r = await client.get(url)
@@ -125,6 +149,73 @@ async def _fetch_html(
         if failed_sources is not None:
             failed_sources.add(_domain(url) or url)
         return None
+    return None
+
+
+async def _fetch_taxgov_html(
+    url: str,
+    failed_sources: set[str] | None = None,
+    headers: dict[str, str] | None = None,
+) -> str | None:
+    """Specialized fetch for tax.gov.ua that mimics a browser visit."""
+
+    if "://tax.gov.ua" in url and "://www.tax.gov.ua" not in url:
+        url_www = url.replace("://tax.gov.ua", "://www.tax.gov.ua")
+    else:
+        url_www = url
+
+    base_headers = headers or REQUEST_HEADERS_BROWSER
+    referer_headers = {**base_headers, "Referer": "https://www.tax.gov.ua/"}
+
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30,
+            headers=base_headers,
+            http2=HTTP2_SUPPORTED,
+        ) as client:
+            try:
+                warmup = await client.get("https://www.tax.gov.ua/")
+                if warmup.status_code not in (200, 204):
+                    log.debug("tax.gov.ua warmup status=%s", warmup.status_code)
+            except Exception as warmup_exc:
+                log.debug("tax.gov.ua warmup error: %s", warmup_exc)
+
+            response = await client.get(url_www, headers=referer_headers)
+            if response.status_code == 403:
+                alt_urls = [
+                    url_www.rstrip("/"),
+                    "https://www.tax.gov.ua/media-tsentr/novini/",
+                    "https://www.tax.gov.ua/media-tsentr/",
+                ]
+                for alt in alt_urls:
+                    if not alt:
+                        continue
+                    alt_response = await client.get(alt, headers=referer_headers)
+                    if alt_response.status_code == 200 and alt_response.text:
+                        return alt_response.text
+                log.warning("tax.gov.ua still 403: %s", url_www)
+                if failed_sources is not None:
+                    failed_sources.add("www.tax.gov.ua")
+                return None
+
+            if response.status_code == 200 and response.text:
+                return response.text
+
+            log.warning(
+                "tax.gov.ua html fetch failed %s: status=%s",
+                url_www,
+                response.status_code,
+            )
+            if failed_sources is not None:
+                failed_sources.add("www.tax.gov.ua")
+            return None
+    except Exception as exc:
+        log.warning("tax.gov.ua fetch exception %s: %s", url_www, exc)
+        if failed_sources is not None:
+            failed_sources.add("www.tax.gov.ua")
+        return None
+
     return None
 
 
