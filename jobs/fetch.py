@@ -15,6 +15,7 @@ from db.session import SessionLocal
 from db.models import Article
 from jobs.nbu_scraper import fetch_nbu_news, NBU_NEWS_URL
 from services.summary import choose_summary, normalize_text
+from services.nbu_article import extract_nbu_body, is_reliable_nbu_body
 
 log = logging.getLogger("bot")
 
@@ -23,6 +24,12 @@ REQUEST_HEADERS = {
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
     "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
+}
+
+REQUEST_HEADERS_HTML = {
+    "User-Agent": REQUEST_HEADERS["User-Agent"],
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": REQUEST_HEADERS.get("Accept-Language", "uk-UA,uk;q=0.9,en;q=0.8"),
 }
 
 TOPIC_QUERIES = {
@@ -90,9 +97,17 @@ def _resource_key_label(source: str, default_label: str | None = None) -> tuple[
 def _in_whitelist_lvl1(domain: str) -> bool:
     return any(domain.endswith(d.strip()) for d in settings.whitelist_level1)
 
-async def _fetch_html(url: str, failed_sources: set[str] | None = None) -> str | None:
+async def _fetch_html(
+    url: str,
+    failed_sources: set[str] | None = None,
+    headers: dict[str, str] | None = None,
+) -> str | None:
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=20, headers=REQUEST_HEADERS) as client:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=20,
+            headers=headers or REQUEST_HEADERS_HTML,
+        ) as client:
             log.debug("fetching html: %s", url)
             r = await client.get(url)
             if r.status_code == 200 and r.text:
@@ -194,13 +209,36 @@ async def ingest_one(
             summary_candidate = summary
             if html:
                 image_url = _extract_image(html)
-                summary_candidate = choose_summary(title or "", summary_candidate, html)
+                if dom.endswith("bank.gov.ua"):
+                    body_text = extract_nbu_body(html)
+                    if body_text:
+                        summary_candidate = body_text
+                    else:
+                        summary_candidate = choose_summary(title or "", summary_candidate, html)
+                else:
+                    summary_candidate = choose_summary(title or "", summary_candidate, html)
             else:
                 log.debug("no html content for %s", normalized_url)
                 if failed_sources is not None:
                     failed_sources.add(dom or normalized_url)
 
             summary_text = normalize_text(summary_candidate)
+
+            if dom.endswith("bank.gov.ua"):
+                if not is_reliable_nbu_body(summary_text, html):
+                    log.warning(
+                        "skip NBU article: body not reliably extracted url=%s",
+                        normalized_url,
+                    )
+                    return "skipped_no_body"
+
+            if not summary_text:
+                log.warning(
+                    "skip article without extracted body url=%s title=%s",
+                    normalized_url,
+                    title,
+                )
+                return "skipped_no_body"
             art = Article(
                 title=title or normalized_url,
                 url=normalized_url,
@@ -349,13 +387,14 @@ async def run_ingest_cycle():
     if results:
         log.info(
             "ingest cycle finished: created=%s duplicate=%s skipped_level1=%s error=%s "
-            "skipped_old=%s skipped_no_date=%s",
+            "skipped_old=%s skipped_no_date=%s skipped_no_body=%s",
             results.get("created", 0),
             results.get("duplicate", 0),
             results.get("skipped_level1", 0),
             results.get("error", 0),
             results.get("skipped_old", 0),
             results.get("skipped_no_date", 0),
+            results.get("skipped_no_body", 0),
         )
     else:
         log.info("ingest cycle finished: no entries processed")
