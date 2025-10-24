@@ -1,7 +1,4 @@
 import logging
-from urllib.parse import urlencode
-
-import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Update
@@ -9,7 +6,9 @@ from telegram.ext import ContextTypes
 
 from settings import settings
 from db.session import SessionLocal
-from db.models import Article, Draft
+from db.models import Article, Draft, DraftPreview
+from services.previews import build_preview_variants
+from services.utm import with_utm
 
 log = logging.getLogger("bot")
 
@@ -37,11 +36,6 @@ PROMPT = """Ти редактор новин з міжнародного опо�
 Що зробити: 1–3 буліти.
 Наприкінці не додавай посилання та теги, тільки текст повідомлення. Тон: нейтрально-експертний, без юрпорад. Ось вихідні дані (заголовок, короткий зміст, URL): 
 """
-
-def _utm(url: str) -> str:
-    params = {"utm_source": settings.UTM_SOURCE, "utm_medium": settings.UTM_MEDIUM, "utm_campaign": settings.UTM_CAMPAIGN}
-    glue = "&" if ("?" in url) else "?"
-    return url + glue + urlencode(params)
 
 async def _llm_rewrite_ua(text: str) -> str:
     if not settings.OPENAI_API_KEY:
@@ -99,7 +93,8 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ua = await _llm_rewrite_ua(PROMPT + base_text)
 
         # Собираем блок «Джерела» и теги
-        src_md = f"Джерела: [{a.source_domain}]({_utm(a.url)})\n\n_{DISCLAIMER}_"
+        link_with_utm = with_utm(a.url)
+        src_md = f"Джерела: [{a.source_domain}]({link_with_utm})\n\n_{DISCLAIMER}_"
         tags = TAGS
 
         d = Draft(
@@ -111,6 +106,24 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             created_by=update.effective_user.id if update.effective_user else None,
         )
         s.add(d)
+        await s.flush()
+
+        preview_variants = build_preview_variants(
+            title=a.title,
+            review_md=d.body_md,
+            link_url=link_with_utm,
+            tags=d.tags,
+        )
+
+        for kind, text in preview_variants.items():
+            s.add(
+                DraftPreview(
+                    draft_id=d.id,
+                    kind=kind,
+                    text_md=text,
+                )
+            )
+
         a.taken = True
         await s.commit()
         await s.refresh(d)

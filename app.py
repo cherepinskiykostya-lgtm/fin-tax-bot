@@ -12,6 +12,7 @@ from handlers.moderation import (
     articles_cmd,
     articles_reset_cmd,
     queue_refresh_callback,
+    draft_preview_action_callback,
 )
 from handlers.draft_make import make_cmd
 from jobs.fetch import run_ingest_cycle
@@ -65,6 +66,12 @@ tg_app.add_handler(CommandHandler("approve", approve_cmd))
 tg_app.add_handler(CommandHandler("make", make_cmd))
 tg_app.add_handler(CommandHandler("articles_reset", articles_reset_cmd))
 tg_app.add_handler(CallbackQueryHandler(queue_refresh_callback, pattern="^refresh_news$"))
+tg_app.add_handler(
+    CallbackQueryHandler(
+        draft_preview_action_callback,
+        pattern=r"^draft:\d+:(?:show|publish):(with_image|without_image)$",
+    )
+)
 
 # --- Webhook endpoint ---
 @app.post(f"/webhook/{settings.WEBHOOK_SECRET}")

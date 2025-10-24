@@ -6,10 +6,10 @@ from db.models import User
 
 MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
     [
-        [KeyboardButton("/articles"), KeyboardButton("/queue")],
-        [KeyboardButton("/preview"), KeyboardButton("/approve")],
-        [KeyboardButton("/make"), KeyboardButton("/help")],
-        [KeyboardButton("/ping"), KeyboardButton("/articles_reset")],
+        [KeyboardButton("/articles"), KeyboardButton("/make")],
+        [KeyboardButton("/queue"), KeyboardButton("/preview")],
+        [KeyboardButton("/approve"), KeyboardButton("/articles_reset")],
+        [KeyboardButton("/help"), KeyboardButton("/ping")],
     ],
     resize_keyboard=True,
 )

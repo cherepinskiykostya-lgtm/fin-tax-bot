@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, Literal
 
-from sqlalchemy import String, BigInteger, Integer, Text, DateTime, Boolean
+from sqlalchemy import String, BigInteger, Integer, Text, DateTime, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from .session import Base
 
@@ -57,4 +57,17 @@ class Draft(Base):
     image_url: Mapped[Optional[str]] = mapped_column(Text)
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[Optional[int]] = mapped_column(BigInteger)  # admin ID кто инициировал
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class DraftPreview(Base):
+    """Збережені варіанти прев'ю для драфтів."""
+
+    __tablename__ = "draft_previews"
+    __table_args__ = (UniqueConstraint("draft_id", "kind", name="uq_draft_preview_kind"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    draft_id: Mapped[int] = mapped_column(Integer, index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    text_md: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

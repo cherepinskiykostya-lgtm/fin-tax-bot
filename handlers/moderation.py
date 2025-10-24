@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, Dict
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from sqlalchemy import select, or_, delete
@@ -7,10 +7,73 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from settings import settings
 from db.session import SessionLocal
-from db.models import Article, Draft
+from db.models import Article, Draft, DraftPreview
 from jobs.fetch import run_ingest_cycle
+from services.previews import (
+    build_preview_variants,
+    PREVIEW_WITH_IMAGE,
+    PREVIEW_WITHOUT_IMAGE,
+)
+from services.utm import with_utm
 
 log = logging.getLogger("bot")
+
+
+async def _ensure_preview_variants(
+    session: AsyncSession,
+    draft: Draft,
+    article: Article,
+) -> Dict[str, str]:
+    """Guarantee that both preview variants exist and return them."""
+    previews = (
+        await session.execute(
+            select(DraftPreview).where(DraftPreview.draft_id == draft.id)
+        )
+    ).scalars().all()
+
+    preview_map = {p.kind: p for p in previews}
+    required = {PREVIEW_WITH_IMAGE, PREVIEW_WITHOUT_IMAGE}
+
+    if not required.issubset(preview_map.keys()):
+        variants = build_preview_variants(
+            title=article.title,
+            review_md=draft.body_md,
+            link_url=with_utm(article.url),
+            tags=draft.tags,
+        )
+        for kind, text in variants.items():
+            if kind in preview_map:
+                preview_map[kind].text_md = text
+            else:
+                preview = DraftPreview(draft_id=draft.id, kind=kind, text_md=text)
+                session.add(preview)
+                preview_map[kind] = preview
+        await session.flush()
+
+    return {kind: obj.text_md for kind, obj in preview_map.items()}
+
+
+async def _send_variant_to_chat(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    *,
+    text: str,
+    image_url: Optional[str],
+    as_photo: bool,
+) -> None:
+    if as_photo and image_url:
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=image_url,
+            caption=text,
+            parse_mode="Markdown",
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="Markdown",
+        )
 
 def admin_only(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,20 +185,67 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     async with SessionLocal() as s:
         d: Optional[Draft] = await s.get(Draft, did)
-    if not d:
-        log.warning("preview_cmd: draft not found id=%s", did)
-        await update.message.reply_text("Драфт не знайдено.")
-        return
+        if not d:
+            log.warning("preview_cmd: draft not found id=%s", did)
+            await update.message.reply_text("Драфт не знайдено.")
+            return
 
-    caption = d.body_md + "\n\n" + d.sources_md + "\n\n" + d.tags
+        a: Optional[Article] = await s.get(Article, d.article_id)
+        if not a:
+            log.warning("preview_cmd: article missing for draft id=%s article_id=%s", did, d.article_id)
+            await update.message.reply_text("Статтю не знайдено.")
+            return
+
+        await _ensure_preview_variants(s, d, a)
+
+    buttons: list[list[InlineKeyboardButton]] = []
     if d.image_url:
-        try:
-            await update.message.reply_photo(d.image_url, caption=caption, parse_mode="Markdown")
-        except Exception:
-            log.exception("preview_cmd failed to send photo draft_id=%s", did)
-            await update.message.reply_text(caption, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(caption, parse_mode="Markdown")
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "👁️ Прев'ю з картинкою (до 1024)",
+                    callback_data=f"draft:{d.id}:show:{PREVIEW_WITH_IMAGE}",
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "👁️ Прев'ю без картинки (до 4096)",
+                callback_data=f"draft:{d.id}:show:{PREVIEW_WITHOUT_IMAGE}",
+            )
+        ]
+    )
+
+    if d.image_url:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "✅ Опублікувати з картинкою",
+                    callback_data=f"draft:{d.id}:publish:{PREVIEW_WITH_IMAGE}",
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "✅ Опублікувати без картинки",
+                callback_data=f"draft:{d.id}:publish:{PREVIEW_WITHOUT_IMAGE}",
+            )
+        ]
+    )
+
+    keyboard = InlineKeyboardMarkup(buttons)
+    intro_lines = [
+        f"Драфт {d.id}: доступні два варіанти прев'ю.",
+        "З картинкою — все повідомлення має вміститись у 1024 символи.",
+        "Без картинки — можна використати до 4096 символів.",
+        "Скористайся кнопками нижче, щоб переглянути або опублікувати обраний формат.",
+    ]
+
+    await update.message.reply_text("\n".join(intro_lines), reply_markup=keyboard)
 
 
 @admin_only
@@ -168,19 +278,39 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Статтю не знайдено.")
             return
 
-        # Проверка «Рівень 1»
         if not a.level1_ok:
             log.info("approve_cmd: level1 check failed for draft=%s article=%s", did, a.id)
             await update.message.reply_text("Відхилено: немає офіційного джерела (Рівень 1).")
             return
 
-        # Паблиш в канал
-        caption = d.body_md + "\n\n" + d.sources_md + "\n\n" + d.tags
+        previews = await _ensure_preview_variants(s, d, a)
+
+        variant = PREVIEW_WITH_IMAGE if d.image_url else PREVIEW_WITHOUT_IMAGE
+        if len(context.args) > 1:
+            option = context.args[1].lower()
+            if option in {"img", "image", "photo", "with", "with_image", "pic", "фото", "картинка"}:
+                variant = PREVIEW_WITH_IMAGE
+            elif option in {"text", "noimage", "without", "without_image", "plain", "без", "текст"}:
+                variant = PREVIEW_WITHOUT_IMAGE
+
+        if variant == PREVIEW_WITH_IMAGE and not d.image_url:
+            variant = PREVIEW_WITHOUT_IMAGE
+
+        text = previews.get(variant)
+        if not text:
+            await update.message.reply_text("Не знайдено збережений варіант для публікації.")
+            return
+
+        prefer_photo = variant == PREVIEW_WITH_IMAGE and bool(d.image_url)
+
         try:
-            if d.image_url:
-                await context.bot.send_photo(chat_id=settings.CHANNEL_ID, photo=d.image_url, caption=caption, parse_mode="Markdown")
-            else:
-                await context.bot.send_message(chat_id=settings.CHANNEL_ID, text=caption, parse_mode="Markdown")
+            await _send_variant_to_chat(
+                context,
+                settings.CHANNEL_ID,
+                text=text,
+                image_url=d.image_url,
+                as_photo=prefer_photo,
+            )
         except Exception as e:
             log.exception("send to channel failed: %s", e)
             await update.message.reply_text("Не вдалося відправити в канал.")
@@ -189,9 +319,98 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         d.approved = True
         await s.merge(d)
         await s.commit()
-        log.info("approve_cmd: draft=%s published by %s", did, uid)
+        log.info("approve_cmd: draft=%s published by %s as %s", did, uid, variant)
 
     await update.message.reply_text("Опубліковано ✅")
+
+
+@admin_only
+async def draft_preview_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query or not query.data:
+        return
+
+    parts = query.data.split(":")
+    if len(parts) != 4:
+        await query.answer("Некоректна дія.", show_alert=True)
+        return
+
+    _, draft_id_raw, action, variant = parts
+
+    if variant not in {PREVIEW_WITH_IMAGE, PREVIEW_WITHOUT_IMAGE}:
+        await query.answer("Невідомий варіант.", show_alert=True)
+        return
+
+    try:
+        draft_id = int(draft_id_raw)
+    except ValueError:
+        await query.answer("Некоректний ID.", show_alert=True)
+        return
+
+    async with SessionLocal() as s:
+        draft: Optional[Draft] = await s.get(Draft, draft_id)
+        if not draft:
+            await query.answer("Драфт не знайдено.", show_alert=True)
+            return
+
+        article: Optional[Article] = await s.get(Article, draft.article_id)
+        if not article:
+            await query.answer("Статтю не знайдено.", show_alert=True)
+            return
+
+        previews = await _ensure_preview_variants(s, draft, article)
+        text = previews.get(variant)
+        if not text:
+            await query.answer("Варіант відсутній.", show_alert=True)
+            return
+
+        prefer_photo = variant == PREVIEW_WITH_IMAGE and bool(draft.image_url)
+
+        if action == "show":
+            await query.answer("Надсилаю прев'ю…", show_alert=False)
+            target_chat_id: Optional[int] = None
+            if query.message and query.message.chat_id:
+                target_chat_id = query.message.chat_id
+            elif update.effective_chat:
+                target_chat_id = update.effective_chat.id
+
+            if target_chat_id is None:
+                log.warning("draft_preview_action_callback: unable to resolve chat for preview draft_id=%s", draft_id)
+                return
+
+            await _send_variant_to_chat(
+                context,
+                target_chat_id,
+                text=text,
+                image_url=draft.image_url,
+                as_photo=prefer_photo,
+            )
+            return
+
+        if action == "publish":
+            try:
+                await _send_variant_to_chat(
+                    context,
+                    settings.CHANNEL_ID,
+                    text=text,
+                    image_url=draft.image_url,
+                    as_photo=prefer_photo,
+                )
+            except Exception as exc:
+                log.exception("draft_preview_action_callback publish failed: %s", exc)
+                await query.answer("Не вдалося опублікувати.", show_alert=True)
+                return
+
+            draft.approved = True
+            await s.merge(draft)
+            await s.commit()
+
+            await query.answer("Опубліковано ✅", show_alert=False)
+            if query.message:
+                await query.message.reply_text("Опубліковано ✅")
+            return
+
+    await query.answer("Невідома дія.", show_alert=True)
 
 
 @admin_only
