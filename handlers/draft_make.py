@@ -1,4 +1,5 @@
 import logging
+import re
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -25,15 +26,22 @@ def admin_only(func):
     return wrapper
 
 
-TAGS = "#PillarTwo #CFC #CRS #BO #WHT #IPBox #TP #DiiaCity #NBU #UkraineTax #IT"
+BASE_TAGS = "#PillarTwo #CFC #CRS #BO #WHT #IPBox #TP #DiiaCity #NBU #UkraineTax #IT"
 DISCLAIMER = "Матеріал має інформативний характер і не є податковою/юридичною консультацією."
 
-PROMPT = """Ти редактор новин з міжнародного оподаткування. Розгорнуто (1200–2000 символів українською) сформуй повідомлення для Telegram за шаблоном Markdown:
-🧭 [ТЕМА] Країна/Орган — коротко
-Що сталося: 1–2 речення.
-Чому важливо (IT/CFO): 1–2 буліти.
-Що зробити: 1–3 буліти.
-Наприкінці не додавай посилання та теги, тільки текст повідомлення. Тон: нейтрально-експертний, без юрпорад. Ось вихідні дані (заголовок, короткий зміст, URL): 
+PROMPT_TEMPLATE = """Ти редактор новин з міжнародного оподаткування. Українською сформуй повідомлення для Telegram у Markdown-форматі з трьома блоками:
+Довгий пост: 1200–2000 символів, структурований текст без маркованих списків і без додаткових заголовків.
+Короткий пост: стисла версія до 600 символів у вигляді 2–3 речень.
+Теги: добери релевантні хештеги.
+Не додавай інші розділи чи звернення до читача, не давай порад. Тон: нейтрально-експертний, фактологічний.
+Ось базовий перелік хештегів, відкинь недоречні та додай власні за потреби: {base_tags}
+Дотримуйся структури:
+Довгий пост:
+...
+Короткий пост:
+...
+Теги: #...
+Ось вихідні дані (заголовок, короткий зміст, URL):
 """
 
 MAX_REWRITE_LENGTH = 3800
@@ -92,24 +100,33 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Готовим ввод для LLM
         base_text = f"{a.title}\n\n{(a.summary or '')}\n\n{a.url}"
-        ua = await _llm_rewrite_ua(PROMPT, base_text)
+        prompt = PROMPT_TEMPLATE.format(base_tags=BASE_TAGS)
+        ua = await _llm_rewrite_ua(prompt, base_text)
 
         ua = ua.strip()
-        if "Чому важливо (IT/CFO):" in ua:
-            lines = []
-            for line in ua.splitlines():
-                if line.startswith("Чому важливо (IT/CFO):") and lines and lines[-1] != "":
-                    lines.append("")
-                lines.append(line)
-            ua = "\n".join(lines).strip()
+
+        tags = BASE_TAGS
+        tag_line = re.search(r"^Теги:\s*(.+)$", ua, flags=re.MULTILINE)
+        if tag_line:
+            candidate = tag_line.group(1).strip()
+            if candidate:
+                normalized = candidate.replace(",", " ")
+                hashtags = []
+                for token in normalized.split():
+                    if token.startswith("#") and token not in hashtags:
+                        hashtags.append(token)
+                if hashtags:
+                    tags = " ".join(hashtags)
+                else:
+                    tags = " ".join(candidate.split())
+            ua = re.sub(r"^Теги:.*$", "", ua, flags=re.MULTILINE).strip()
 
         title_line = f"**{a.title.strip()}**"
         body_md = f"{title_line}\n\n{ua}" if ua else title_line
 
         # Собираем блок «Джерела» и теги
         link_with_utm = with_utm(a.url)
-        src_md = f"Джерела: [{a.source_domain}]({link_with_utm})\n\n_{DISCLAIMER}_"
-        tags = TAGS
+        src_md = f"Читати далі: [{a.source_domain}]({link_with_utm})\n\n_{DISCLAIMER}_"
 
         d = Draft(
             article_id=a.id,
