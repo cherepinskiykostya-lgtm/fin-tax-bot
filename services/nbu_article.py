@@ -115,4 +115,114 @@ def extract_nbu_body(html: str) -> str | None:
     return body or None
 
 
-__all__ = ["extract_nbu_body", "is_reliable_nbu_body"]
+def _score_container(node: Node) -> int:
+    """Оценить контейнер по суммарной длине текста белых тегов."""
+
+    score = 0
+    for el in node.traverse():
+        tag = (el.tag or "").lower()
+        if tag in WHITELIST_TAGS:
+            text = (el.text() or "").strip()
+            if text:
+                score += len(text)
+    return score
+
+
+def extract_body_fallback_generic(
+    html: str,
+    min_len: int = MIN_BODY_LENGTH,
+    max_len: int = 3500,
+) -> str | None:
+    """Жёсткий фолбек для любых статей: берём самый насыщенный текстом блок."""
+
+    try:
+        tree = HTMLParser(html)
+    except Exception:
+        return None
+
+    candidates: list[Node] = []
+    for sel in ("main", "article", '[role="main"]', '[itemprop="articleBody"]'):
+        el = tree.css_first(sel)
+        if el is not None:
+            candidates.append(el)
+
+    h1 = tree.css_first("h1")
+    if h1 is not None and h1.parent is not None:
+        candidates.append(h1.parent)
+
+    if not candidates:
+        candidates.extend(tree.css("div, section"))
+
+    best: Node | None = None
+    best_score = 0
+    for candidate in candidates:
+        score = _score_container(candidate)
+        if score > best_score:
+            best = candidate
+            best_score = score
+
+    if best is None or best_score == 0:
+        parts: list[str] = []
+        for p in tree.css("p"):
+            text = (p.text() or "").strip()
+            if text:
+                parts.append(text)
+        text = "\n\n".join(parts).strip()
+        if len(text) >= min_len:
+            return text[:max_len]
+        return None
+
+    parts: list[str] = []
+    seen: set[str] = set()
+    for el in best.traverse():
+        tag = (el.tag or "").lower()
+        if tag not in WHITELIST_TAGS:
+            continue
+
+        text = (el.text() or "").strip()
+        if not text:
+            continue
+
+        lowered = text.lower()
+        if any(stop in lowered for stop in STOP_PHRASES):
+            break
+
+        if tag in {"ul", "ol"}:
+            for li in el.css("li"):
+                li_text = (li.text() or "").strip()
+                if not li_text or li_text in seen:
+                    continue
+                seen.add(li_text)
+                parts.append(f"• {li_text}")
+        elif tag == "li":
+            if text in seen:
+                continue
+            seen.add(text)
+            parts.append(f"• {text}")
+        else:
+            if text in seen:
+                continue
+            seen.add(text)
+            parts.append(text)
+
+    body = "\n\n".join(part for part in parts if part).strip()
+    if len(body) < min_len:
+        fallback = "\n\n".join(
+            (el.text() or "").strip()
+            for el in best.css("p")
+            if (el.text() or "").strip()
+        ).strip()
+        if len(fallback) > len(body):
+            body = fallback
+
+    if not body:
+        return None
+
+    return body[:max_len]
+
+
+__all__ = [
+    "extract_nbu_body",
+    "is_reliable_nbu_body",
+    "extract_body_fallback_generic",
+]
