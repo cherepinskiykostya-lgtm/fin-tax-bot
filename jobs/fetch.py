@@ -201,6 +201,13 @@ async def ingest_one(
                     failed_sources.add(dom or normalized_url)
 
             summary_text = normalize_text(summary_candidate)
+            if not summary_text:
+                log.warning(
+                    "skip article without extracted body url=%s title=%s",
+                    normalized_url,
+                    title,
+                )
+                return "skipped_no_body"
             art = Article(
                 title=title or normalized_url,
                 url=normalized_url,
@@ -349,13 +356,14 @@ async def run_ingest_cycle():
     if results:
         log.info(
             "ingest cycle finished: created=%s duplicate=%s skipped_level1=%s error=%s "
-            "skipped_old=%s skipped_no_date=%s",
+            "skipped_old=%s skipped_no_date=%s skipped_no_body=%s",
             results.get("created", 0),
             results.get("duplicate", 0),
             results.get("skipped_level1", 0),
             results.get("error", 0),
             results.get("skipped_old", 0),
             results.get("skipped_no_date", 0),
+            results.get("skipped_no_body", 0),
         )
     else:
         log.info("ingest cycle finished: no entries processed")
