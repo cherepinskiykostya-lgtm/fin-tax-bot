@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import re
@@ -15,15 +16,30 @@ from services.ukrainian_dates import KYIV_TZ, parse_ukrainian_date
 
 log = logging.getLogger("bot")
 
-TAX_NEWS_URL = "https://tax.gov.ua/media-tsentr/novini/"
+TAX_NEWS_URL = "https://www.tax.gov.ua/media-tsentr/novini/"
 BASE_URL = "https://tax.gov.ua"
 
-REQUEST_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+REQUEST_HEADERS_BROWSER = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9," 
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
     "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
 }
+
+HTTP2_SUPPORTED = importlib.util.find_spec("h2") is not None
 
 
 @dataclass(slots=True)
@@ -271,21 +287,53 @@ def parse_tax_news(html: str, now: datetime | None = None) -> List[TaxNewsItem]:
 
 async def fetch_tax_news(client: httpx.AsyncClient | None = None) -> List[TaxNewsItem]:
     close_client = False
+    referer_headers = {**REQUEST_HEADERS_BROWSER, "Referer": "https://www.tax.gov.ua/"}
+
     if client is None:
         client = httpx.AsyncClient(
-            headers=REQUEST_HEADERS,
-            timeout=20,
+            headers=REQUEST_HEADERS_BROWSER,
+            timeout=30,
             follow_redirects=True,
+            http2=HTTP2_SUPPORTED,
         )
         close_client = True
 
     try:
-        response = await client.get(TAX_NEWS_URL)
-        if response.status_code != 200:
+        try:
+            warmup = await client.get("https://www.tax.gov.ua/", headers=REQUEST_HEADERS_BROWSER)
+            if warmup.status_code not in (200, 204):
+                log.debug("tax.gov.ua warmup status=%s", warmup.status_code)
+        except Exception as warmup_exc:
+            log.debug("tax.gov.ua warmup error: %s", warmup_exc)
+
+        response = await client.get(TAX_NEWS_URL, headers=referer_headers)
+        html_text: str | None = None
+        if response.status_code == 403:
+            alt_urls = [
+                TAX_NEWS_URL.rstrip("/"),
+                "https://www.tax.gov.ua/media-tsentr/novini",
+                "https://www.tax.gov.ua/media-tsentr/",
+            ]
+            for alt in alt_urls:
+                alt_response = await client.get(alt, headers=referer_headers)
+                if alt_response.status_code == 200 and alt_response.text:
+                    html_text = alt_response.text
+                    break
+            if html_text is None:
+                log.warning("tax news fetch status 403 after retries")
+                return []
+        elif response.status_code == 200 and response.text:
+            html_text = response.text
+        else:
             log.warning("tax news fetch status %s", response.status_code)
             return []
+
+        if not html_text:
+            log.warning("tax news fetch returned empty body")
+            return []
+
         reference_now = datetime.now(KYIV_TZ)
-        return parse_tax_news(response.text, now=reference_now)
+        return parse_tax_news(html_text, now=reference_now)
     except Exception:
         log.exception("tax news fetch error")
         return []
