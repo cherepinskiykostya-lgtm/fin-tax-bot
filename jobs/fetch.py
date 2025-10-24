@@ -15,7 +15,11 @@ from db.session import SessionLocal
 from db.models import Article
 from jobs.nbu_scraper import fetch_nbu_news, NBU_NEWS_URL
 from services.summary import choose_summary, normalize_text
-from services.nbu_article import extract_nbu_body, is_reliable_nbu_body
+from services.nbu_article import (
+    extract_body_fallback_generic,
+    extract_nbu_body,
+    is_reliable_nbu_body,
+)
 
 log = logging.getLogger("bot")
 
@@ -211,10 +215,16 @@ async def ingest_one(
                 image_url = _extract_image(html)
                 if dom.endswith("bank.gov.ua"):
                     body_text = extract_nbu_body(html)
+                    if not body_text:
+                        body_text = extract_body_fallback_generic(html)
                     if body_text:
                         summary_candidate = body_text
                     else:
-                        summary_candidate = choose_summary(title or "", summary_candidate, html)
+                        log.warning(
+                            "NBU: both primary and fallback body extract failed url=%s",
+                            normalized_url,
+                        )
+                        return "skipped_no_body"
                 else:
                     summary_candidate = choose_summary(title or "", summary_candidate, html)
             else:
