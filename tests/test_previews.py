@@ -12,5 +12,5 @@ def test_preview_contains_subscribe_promo(variant_key):
         tags="#example",
     )
 
-    subscribe_link = '<a href="https://t.me/ITTaxRadar">Підпишись на IT Tax Radar</a>'
+    subscribe_link = '<a href="https://t.me/ITTaxRadar"><b>Підпишись на IT Tax Radar</b></a>'
     assert subscribe_link in variants[variant_key]
