@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator, List, Sequence
 from urllib.parse import urljoin, urlparse
-from zoneinfo import ZoneInfo
-
 import httpx
 from selectolax.parser import HTMLParser, Node
+
+from services.ukrainian_dates import KYIV_TZ, parse_ukrainian_date
 
 log = logging.getLogger("bot")
 
@@ -18,11 +18,6 @@ NBU_NEWS_URL = "https://bank.gov.ua/ua/news"
 NBU_ALL_NEWS_URL = "https://bank.gov.ua/ua/news/all"
 NBU_SEARCH_URL = "https://bank.gov.ua/ua/news/search"
 BASE_URL = "https://bank.gov.ua"
-
-try:
-    KYIV_TZ = ZoneInfo("Europe/Kyiv")
-except Exception:  # pragma: no cover
-    KYIV_TZ = timezone.utc
 
 REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -38,104 +33,6 @@ class NBUNewsItem:
     url: str
     published: datetime
     summary: str | None = None
-
-
-_MONTH_VARIANTS: dict[int, tuple[str, ...]] = {
-    1: ("січня", "січ", "січ."),
-    2: ("лютого", "лют", "лют."),
-    3: ("березня", "берез", "бер", "бер."),
-    4: ("квітня", "квіт", "квіт."),
-    5: ("травня", "трав", "трав."),
-    6: ("червня", "черв", "черв."),
-    7: ("липня", "лип", "лип."),
-    8: ("серпня", "серп", "серп."),
-    9: ("вересня", "верес", "вер", "вер."),
-    10: ("жовтня", "жовт", "жов", "жовт."),
-    11: ("листопада", "листоп", "лист", "лист."),
-    12: ("грудня", "груд", "груд."),
-}
-
-_MONTHS: dict[str, int] = {}
-for month, variants in _MONTH_VARIANTS.items():
-    for variant in variants:
-        normalized_variant = variant.replace(".", "").lower()
-        _MONTHS[normalized_variant] = month
-
-
-def _parse_ukrainian_date(value: str, reference: datetime | None = None) -> datetime | None:
-    raw = value.strip()
-    if not raw:
-        return None
-
-    text = raw.lower()
-    text = text.replace("сьогодні", "")
-    text = re.sub(r"\s+р(\.|оку)?$", "", text)
-    text = text.replace(" о ", " ")
-    text = text.replace(",", " ")
-    text = re.sub(r"\s+", " ", text).strip()
-
-    iso_match = re.search(
-        r"(\d{4}-\d{2}-\d{2}t\d{2}:\d{2}(?::\d{2})?(?:[+\-]\d{2}:?\d{2}|z)?)",
-        text,
-    )
-    if iso_match:
-        iso_value = iso_match.group(1).replace("z", "+00:00")
-        try:
-            dt = datetime.fromisoformat(iso_value)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=KYIV_TZ)
-            return dt
-        except ValueError:
-            pass
-
-    dotted = re.search(r"(\d{1,2})[./-](\d{1,2})[./-](\d{4})", text)
-    if dotted:
-        day, month, year = dotted.groups()
-        try:
-            return datetime(
-                int(year),
-                int(month),
-                int(day),
-                tzinfo=KYIV_TZ,
-            )
-        except ValueError:
-            return None
-
-    time_only = re.fullmatch(r"(\d{1,2}):(\d{2})(?:\s*год\.?)?", text)
-    if time_only:
-        hour = int(time_only.group(1))
-        minute = int(time_only.group(2))
-        base = reference
-        if base is None:
-            base = datetime.now(KYIV_TZ)
-        elif base.tzinfo is None:
-            base = base.replace(tzinfo=KYIV_TZ)
-        else:
-            base = base.astimezone(KYIV_TZ)
-        try:
-            return base.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        except ValueError:
-            return None
-
-    words = re.search(r"(\d{1,2})\s+([а-яіїєґ.]+)\s+(\d{4})", text)
-    if words:
-        day = int(words.group(1))
-        month_name = words.group(2)
-        normalized_month = month_name.replace(".", "").strip()
-        year = int(words.group(3))
-        month = _MONTHS.get(month_name) or _MONTHS.get(normalized_month)
-        if month is None:
-            return None
-        hour = minute = 0
-        time_match = re.search(r"(\d{1,2}):(\d{2})", text)
-        if time_match:
-            hour = int(time_match.group(1))
-            minute = int(time_match.group(2))
-        try:
-            return datetime(year, month, day, hour, minute, tzinfo=KYIV_TZ)
-        except ValueError:
-            return None
-    return None
 
 
 def _candidate_nodes(tree: HTMLParser) -> Iterable[Node]:
@@ -180,7 +77,7 @@ def _node_date(node: Node, reference: datetime | None = None) -> datetime | None
         for attr in ("data-date", "data-published", "datetime"):
             raw_attr = attributes.get(attr)
             if raw_attr:
-                parsed_attr = _parse_ukrainian_date(raw_attr, reference=reference)
+                parsed_attr = parse_ukrainian_date(raw_attr, reference=reference)
                 if parsed_attr:
                     return parsed_attr.astimezone(timezone.utc)
 
@@ -188,7 +85,7 @@ def _node_date(node: Node, reference: datetime | None = None) -> datetime | None
         if "date" in class_string:
             text_value = target.text().strip()
             if text_value:
-                parsed = _parse_ukrainian_date(text_value, reference=reference)
+                parsed = parse_ukrainian_date(text_value, reference=reference)
                 if parsed:
                     return parsed.astimezone(timezone.utc)
 
@@ -205,7 +102,7 @@ def _node_date(node: Node, reference: datetime | None = None) -> datetime | None
                 except ValueError:
                     pass
             text_value = time_tag.text().strip()
-            parsed = _parse_ukrainian_date(text_value, reference=reference)
+            parsed = parse_ukrainian_date(text_value, reference=reference)
             if parsed:
                 return parsed.astimezone(timezone.utc)
 
@@ -213,7 +110,7 @@ def _node_date(node: Node, reference: datetime | None = None) -> datetime | None
             text_value = candidate.text().strip()
             if not text_value:
                 continue
-            parsed = _parse_ukrainian_date(text_value, reference=reference)
+            parsed = parse_ukrainian_date(text_value, reference=reference)
             if parsed:
                 return parsed.astimezone(timezone.utc)
         return None
@@ -261,9 +158,9 @@ def _node_summary(node: Node, title: str) -> str | None:
             remainder = text.replace(title, "", 1).strip(" -,:\n\t")
             if not remainder:
                 continue
-            if _parse_ukrainian_date(remainder) is not None:
+            if parse_ukrainian_date(remainder) is not None:
                 continue
-        if _parse_ukrainian_date(text) is not None:
+        if parse_ukrainian_date(text) is not None:
             continue
         return text
 
@@ -278,9 +175,9 @@ def _node_summary(node: Node, title: str) -> str | None:
             remainder = text.replace(title, "", 1).strip(" -,:\n\t")
             if not remainder:
                 continue
-            if _parse_ukrainian_date(remainder) is not None:
+            if parse_ukrainian_date(remainder) is not None:
                 continue
-        if _parse_ukrainian_date(text) is not None:
+        if parse_ukrainian_date(text) is not None:
             continue
         return text
 
@@ -319,7 +216,7 @@ def _coerce_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         dt = value
     elif isinstance(value, str):
-        dt = _parse_ukrainian_date(value)
+        dt = parse_ukrainian_date(value)
         if dt is None:
             normalized = value.strip()
             if normalized:

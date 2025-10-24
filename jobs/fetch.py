@@ -14,6 +14,7 @@ from settings import settings
 from db.session import SessionLocal
 from db.models import Article
 from jobs.nbu_scraper import fetch_nbu_news, NBU_NEWS_URL
+from jobs.tax_scraper import fetch_tax_news, TAX_NEWS_URL
 from services.summary import choose_summary, normalize_text
 from services.nbu_article import (
     extract_body_fallback_generic,
@@ -363,7 +364,38 @@ async def run_ingest_cycle():
         resource_info["available"] = False
         failed_sources.add("bank.gov.ua")
 
-    # 3) Google News
+    # 3) DPS HTML news source
+    key, label = _resource_key_label("tax:html", default_label="DPS News (HTML)")
+    resource_info = ensure_resource(key, label)
+    try:
+        log.info("processing DPS news page %s", TAX_NEWS_URL)
+        tax_items = await fetch_tax_news()
+        if not tax_items:
+            resource_info["available"] = False
+        for item in tax_items:
+            published = getattr(item, "published", None)
+            if not published:
+                results["skipped_no_date"] += 1
+                continue
+            if published < cutoff:
+                results["skipped_old"] += 1
+                continue
+            status = await ingest_one(
+                item.url,
+                getattr(item, "title", ""),
+                published,
+                getattr(item, "summary", None),
+                failed_sources=failed_sources,
+            )
+            results[status] += 1
+            if status == "created":
+                resource_info["created"] = int(resource_info["created"]) + 1
+    except Exception:
+        log.exception("DPS scraper error")
+        resource_info["available"] = False
+        failed_sources.add("tax.gov.ua")
+
+    # 4) Google News
     if settings.ENABLE_GOOGLE_NEWS:
         base = "https://news.google.com/rss/search?"
         async with httpx.AsyncClient(follow_redirects=True, timeout=20, headers=REQUEST_HEADERS) as client:
