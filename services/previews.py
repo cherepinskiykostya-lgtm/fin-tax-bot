@@ -341,11 +341,11 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
     header = f"<b>{_escape_text(title.strip())}</b>"
     review_clean = _clean_review(review_md)
     review_without_title = _drop_leading_title(review_clean, title)
-    link_line = f"<a href=\"{_escape_attr(link_url)}\">читати далі</a>"
+    link_line = f"<a href=\"{_escape_attr(link_url)}\">читати далі>></a>"
     tags_line = _escape_text(tags.strip())
     subscribe_block = (
         f"<a href=\"{_escape_attr(SUBSCRIBE_PROMO_URL)}\">"
-        f"{_escape_text(SUBSCRIBE_PROMO_TEXT)}"
+        f"<b>{_escape_text(SUBSCRIBE_PROMO_TEXT)}</b>"
         "</a>"
     )
 
