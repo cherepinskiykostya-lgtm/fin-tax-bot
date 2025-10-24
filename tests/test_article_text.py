@@ -1,0 +1,60 @@
+import sys
+import os
+from textwrap import dedent
+
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "dummy")
+os.environ.setdefault("WEBHOOK_SECRET", "dummy")
+os.environ.setdefault("CHANNEL_ID", "0")
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from services.article_text import extract_article_text  # noqa: E402
+
+
+HTML_WITH_ARTICLE = dedent(
+    """
+    <html>
+      <body>
+        <div class="page">
+          <article class="article__content">
+            <header><h1>На ринку небанківських фінансових послуг з’явилися два нові гравці</h1></header>
+            <div class="article__meta">20 жовтня 2025</div>
+            <div class="article__text">
+              <p>Національний банк України видав дві нові ліцензії небанківським фінансовим установам.</p>
+              <p>АТ «ФК «Портал» отримало право на кредитування, факторинг, фінлізинг та гарантії, а також ліцензію на операції з валютними цінностями в готівковій формі.</p>
+              <p>ТОВ «ФК «Профіт Фінанс» може надавати послугу факторингу. Обидві компанії набули статусу фінансових установ одразу після отримання ліцензій.</p>
+            </div>
+          </article>
+        </div>
+      </body>
+    </html>
+    """
+)
+
+
+HTML_WITHOUT_P_TAGS = dedent(
+    """
+    <html>
+      <body>
+        <main>
+          <section class="news__content">
+            <div>Перше речення про рішення регулятора.</div>
+            <div>Другий абзац пояснює, які саме ліцензії надано.</div>
+          </section>
+        </main>
+      </body>
+    </html>
+    """
+)
+
+
+def test_extract_article_text_collects_paragraphs():
+    text = extract_article_text(HTML_WITH_ARTICLE)
+    assert "Національний банк України" in text
+    assert text.count("\n\n") == 2
+
+
+def test_extract_article_text_falls_back_to_block_text():
+    text = extract_article_text(HTML_WITHOUT_P_TAGS)
+    assert "Перше речення" in text
+    assert "Другий абзац" in text
