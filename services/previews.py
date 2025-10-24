@@ -12,6 +12,16 @@ SUBSCRIBE_PROMO_URL = "https://t.me/ITTaxRadar"
 
 _SENTENCE_ENDINGS = (".", "!", "?", "…")
 
+_VOID_TAGS = {"br", "img", "hr", "input", "meta", "link"}
+
+
+def _visible_length(text: str) -> int:
+    if not text:
+        return 0
+    normalized = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    stripped = re.sub(r"<[^>]+>", "", normalized)
+    return len(html.unescape(stripped))
+
 
 def _clean_review(text: str) -> str:
     """Normalize whitespace but keep paragraph structure."""
@@ -264,48 +274,75 @@ def _markdown_to_telegram_html(markdown: str) -> str:
 
 
 def _truncate_html_preserving_tags(text: str, limit: int) -> str:
-    if len(text) <= limit:
+    if limit <= 0:
+        return ""
+
+    if _visible_length(text) <= limit:
         return text
 
-    truncated = text[:limit]
-
-    # Avoid cutting inside an HTML entity.
-    last_amp = truncated.rfind("&")
-    if last_amp != -1 and truncated.find(";", last_amp) == -1:
-        truncated = truncated[:last_amp]
-
-    # Avoid cutting inside an HTML tag.
-    last_lt = truncated.rfind("<")
-    last_gt = truncated.rfind(">")
-    if last_lt > last_gt:
-        truncated = truncated[:last_lt]
-
-    # Track unclosed tags to close them at the end.
+    visible_target = max(limit - 1, 0)
+    result: List[str] = []
     open_tags: List[str] = []
-    for match in re.finditer(r"<(/?)([a-zA-Z0-9]+)(?:\s[^>]*)?>", truncated):
-        tag = match.group(2).lower()
-        if match.group(1) == "/":
-            if open_tags and open_tags[-1] == tag:
-                open_tags.pop()
-        else:
-            if tag not in {"br"}:
-                open_tags.append(tag)
+    visible_count = 0
+    i = 0
+    length = len(text)
 
-    truncated = truncated.rstrip()
-    if limit > 0 and not truncated.endswith("…"):
-        if len(truncated) >= limit:
-            truncated = truncated[: limit - 1]
+    while i < length and visible_count < visible_target:
+        char = text[i]
+        if char == "<":
+            close_idx = text.find(">", i)
+            if close_idx == -1:
+                break
+            tag_body = text[i + 1 : close_idx].strip()
+            if tag_body:
+                is_closing = tag_body.startswith("/")
+                tag_name = tag_body[1:] if is_closing else tag_body
+                tag_name = tag_name.split()[0].lower() if tag_name else ""
+                is_self_closing = tag_body.endswith("/") or tag_name in _VOID_TAGS
+                if is_closing:
+                    if open_tags and open_tags[-1] == tag_name:
+                        open_tags.pop()
+                elif not is_self_closing and tag_name:
+                    open_tags.append(tag_name)
+            result.append(text[i : close_idx + 1])
+            i = close_idx + 1
+            continue
+        if char == "&":
+            semi_idx = text.find(";", i + 1)
+            if semi_idx == -1:
+                if visible_count + 1 > visible_target:
+                    break
+                result.append(char)
+                visible_count += 1
+                i += 1
+                continue
+            if visible_count + 1 > visible_target:
+                break
+            result.append(text[i : semi_idx + 1])
+            visible_count += 1
+            i = semi_idx + 1
+            continue
+
+        if visible_count + 1 > visible_target:
+            break
+        result.append(char)
+        visible_count += 1
+        i += 1
+
+    truncated = "".join(result).rstrip()
+    if visible_target > 0 and _visible_length(truncated) > visible_target:
+        truncated = _truncate_html_preserving_tags(truncated, visible_target)
+
+    if not truncated.endswith("…"):
+        truncated = truncated.rstrip()
+        if truncated and truncated[-1].isspace():
             truncated = truncated.rstrip()
         truncated += "…"
 
     for tag in reversed(open_tags):
-        closing = f"</{tag}>"
-        if len(truncated) + len(closing) <= limit:
-            truncated += closing
-        else:
-            truncated = re.sub(rf"<{tag}(?:\s[^>]*)?>[^<]*$", "", truncated).rstrip()
+        truncated += f"</{tag}>"
 
-    return truncated[:limit]
+    return truncated
 
 
 def _truncate_before_subscribe(main_text: str, subscribe_block: str, total_limit: int) -> str:
@@ -318,19 +355,19 @@ def _truncate_before_subscribe(main_text: str, subscribe_block: str, total_limit
         return _truncate_html_preserving_tags(subscribe_block, total_limit)
 
     joiner_len = 2
-    available_for_main = total_limit - len(subscribe) - joiner_len
+    available_for_main = total_limit - _visible_length(subscribe) - joiner_len
     if available_for_main < 0:
         return _truncate_html_preserving_tags(subscribe_block, total_limit)
 
     truncated_main = _truncate_html_preserving_tags(main, available_for_main)
     result = _append_block(truncated_main, subscribe_block)
-    if len(result) <= total_limit:
+    if _visible_length(result) <= total_limit:
         return result
 
-    overflow = len(result) - total_limit
+    overflow = _visible_length(result) - total_limit
     truncated_main = _truncate_html_preserving_tags(truncated_main, max(available_for_main - overflow, 0))
     result = _append_block(truncated_main, subscribe_block)
-    if len(result) <= total_limit:
+    if _visible_length(result) <= total_limit:
         return result
 
     return _truncate_html_preserving_tags(subscribe_block, total_limit)
@@ -357,8 +394,8 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
         ),
         subscribe_block,
     )
-    available_for_review_with_image = 1024 - len(base_without_review) - len("\n\n")
-    available_for_review_without_image = 4096 - len(base_without_review) - len("\n\n")
+    available_for_review_with_image = 1024 - _visible_length(base_without_review) - len("\n\n")
+    available_for_review_without_image = 4096 - _visible_length(base_without_review) - len("\n\n")
 
     def build_variant(base_limit: int, total_limit: int) -> str:
         limit = max(base_limit, 0)
@@ -372,11 +409,12 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
                 tags_line,
             )
             text_candidate = _append_block(main_text, subscribe_block)
-            if len(text_candidate) <= total_limit or limit <= 0:
-                if len(text_candidate) <= total_limit:
+            candidate_length = _visible_length(text_candidate)
+            if candidate_length <= total_limit or limit <= 0:
+                if candidate_length <= total_limit:
                     return text_candidate
                 if limit > 0:
-                    overflow = len(text_candidate) - total_limit
+                    overflow = candidate_length - total_limit
                     limit = max(limit - max(overflow, 1), 0)
                     continue
 
@@ -392,7 +430,7 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
                             candidate_tags,
                         )
                         text_candidate = _append_block(main_text, subscribe_block)
-                        if len(text_candidate) <= total_limit:
+                        if _visible_length(text_candidate) <= total_limit:
                             return text_candidate
 
                     main_text = _join_blocks(
@@ -401,7 +439,7 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
                         link_line,
                     )
                     text_candidate = _append_block(main_text, subscribe_block)
-                    if len(text_candidate) <= total_limit:
+                    if _visible_length(text_candidate) <= total_limit:
                         return text_candidate
 
                 main_text = _join_blocks(
@@ -410,7 +448,7 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
                     link_line,
                 )
                 return _truncate_before_subscribe(main_text, subscribe_block, total_limit)
-            overflow = len(text_candidate) - total_limit
+            overflow = candidate_length - total_limit
             limit = max(limit - max(overflow, 1), 0)
 
     with_image_text = build_variant(available_for_review_with_image, 1024)
