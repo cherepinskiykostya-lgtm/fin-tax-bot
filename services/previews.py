@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 from typing import Dict
 
 PREVIEW_WITH_IMAGE = "with_image"
@@ -69,20 +68,12 @@ def _join_blocks(*blocks: str) -> str:
     return "\n\n".join(filtered)
 
 
-def _escape_text(text: str) -> str:
-    return html.escape(text, quote=False)
-
-
-def _escape_attr(value: str) -> str:
-    return html.escape(value, quote=True)
-
-
 def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: str) -> Dict[str, str]:
-    """Return HTML strings for both preview types."""
-    header = f"<b>{_escape_text(title.strip())}</b>"
-    review = _escape_text(_clean_review(review_md))
-    link_line = f"<a href=\"{_escape_attr(link_url)}\">читати далі</a>"
-    tags_line = _escape_text(tags.strip())
+    """Return Markdown strings for both preview types."""
+    header = f"**{title.strip()}**"
+    review = _clean_review(review_md)
+    link_line = f"[читати далі]({link_url})"
+    tags_line = tags.strip()
 
     base_without_review = _join_blocks(header, link_line, tags_line)
     available_for_review_with_image = 1024 - len(base_without_review) - len("\n\n")
