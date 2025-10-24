@@ -66,13 +66,13 @@ async def _send_variant_to_chat(
             chat_id=chat_id,
             photo=image_url,
             caption=text,
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
     else:
         await context.bot.send_message(
             chat_id=chat_id,
             text=text,
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
 def admin_only(func):
