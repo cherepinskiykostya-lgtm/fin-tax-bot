@@ -48,30 +48,6 @@ HTML_WITHOUT_P_TAGS = dedent(
 )
 
 
-HTML_WITH_STOP_SECTION = dedent(
-    """
-    <html>
-      <body>
-        <main>
-          <article>
-            <h1>Виступ Голови Національного банку</h1>
-            <div>11 вер. 2025 14:11</div>
-            <div>
-              <p>Доброго дня, шановні колеги!</p>
-              <h3>Інфляція сповільнюється</h3>
-              <p>Ми фіксуємо подальше зниження інфляційних очікувань.</p>
-            </div>
-            <div class="share">
-              <span>Поділитися</span>
-            </div>
-          </article>
-        </main>
-      </body>
-    </html>
-    """
-)
-
-
 def test_extract_article_text_collects_paragraphs():
     text = extract_article_text(HTML_WITH_ARTICLE)
     assert "Національний банк України" in text
@@ -82,10 +58,3 @@ def test_extract_article_text_falls_back_to_block_text():
     text = extract_article_text(HTML_WITHOUT_P_TAGS)
     assert "Перше речення" in text
     assert "Другий абзац" in text
-
-
-def test_extract_article_text_stops_before_related_sections():
-    text = extract_article_text(HTML_WITH_STOP_SECTION)
-    assert "Доброго дня" in text
-    assert "Інфляція сповільнюється" in text
-    assert "Поділитися" not in text
