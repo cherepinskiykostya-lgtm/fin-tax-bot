@@ -144,9 +144,9 @@ def _candidate_nodes(tree: HTMLParser) -> Iterable[Node]:
         return
 
     allowed_tags = {"article", "div", "li", "section"}
-    seen: set[int] = set()
+    ordered: dict[int, tuple[int, Node]] = {}
 
-    for link in root.css("a[href]"):
+    for index, link in enumerate(root.css("a[href]")):
         href = (link.attributes.get("href") or "").strip()
         if not href or href.startswith("#"):
             continue
@@ -162,13 +162,15 @@ def _candidate_nodes(tree: HTMLParser) -> Iterable[Node]:
         depth = 0
         while container is not None and depth < 6:
             if container.tag in allowed_tags:
-                marker = id(container)
-                if marker not in seen:
-                    seen.add(marker)
-                    yield container
+                marker = container.mem_id
+                if marker not in ordered:
+                    ordered[marker] = (index, container)
                 break
             container = container.parent
             depth += 1
+
+    for _, node in sorted(ordered.values(), key=lambda item: item[0]):
+        yield node
 
 
 def _node_date(node: Node, reference: datetime | None = None) -> datetime | None:
