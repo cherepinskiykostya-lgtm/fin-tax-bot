@@ -7,6 +7,9 @@ from typing import Dict, List, Tuple
 PREVIEW_WITH_IMAGE = "with_image"
 PREVIEW_WITHOUT_IMAGE = "without_image"
 
+SUBSCRIBE_PROMO_TEXT = "Підпишись на IT Tax Radar"
+SUBSCRIBE_PROMO_URL = "https://t.me/ITTaxRadar"
+
 _SENTENCE_ENDINGS = (".", "!", "?", "…")
 
 
@@ -302,8 +305,16 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
     review_without_title = _drop_leading_title(review_clean, title)
     link_line = f"<a href=\"{_escape_attr(link_url)}\">читати далі</a>"
     tags_line = _escape_text(tags.strip())
+    subscribe_header = f"<b>{_escape_text(SUBSCRIBE_PROMO_TEXT)}</b>"
+    subscribe_link = f"<a href=\"{_escape_attr(SUBSCRIBE_PROMO_URL)}\">{_escape_text(SUBSCRIBE_PROMO_URL)}</a>"
 
-    base_without_review = _join_blocks(header, link_line, tags_line)
+    base_without_review = _join_blocks(
+        header,
+        link_line,
+        tags_line,
+        subscribe_header,
+        subscribe_link,
+    )
     available_for_review_with_image = 1024 - len(base_without_review) - len("\n\n")
     available_for_review_without_image = 4096 - len(base_without_review) - len("\n\n")
 
@@ -312,7 +323,14 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
         while True:
             review_candidate_md = _smart_trim(review_without_title, limit)
             review_candidate_html = _markdown_to_telegram_html(review_candidate_md)
-            text_candidate = _join_blocks(header, review_candidate_html, link_line, tags_line)
+            text_candidate = _join_blocks(
+                header,
+                review_candidate_html,
+                link_line,
+                tags_line,
+                subscribe_header,
+                subscribe_link,
+            )
             if len(text_candidate) <= total_limit or limit <= 0:
                 if len(text_candidate) > total_limit:
                     text_candidate = _truncate_html_preserving_tags(text_candidate, total_limit)
