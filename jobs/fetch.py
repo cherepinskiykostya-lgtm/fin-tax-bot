@@ -15,6 +15,7 @@ from db.session import SessionLocal
 from db.models import Article
 from jobs.nbu_scraper import fetch_nbu_news, NBU_NEWS_URL
 from jobs.tax_scraper import fetch_tax_news, TAX_NEWS_URL
+from jobs.staged_fetch import staged_fetch_html
 from services.summary import choose_summary, normalize_text
 from services.nbu_article import (
     extract_body_fallback_generic,
@@ -107,6 +108,26 @@ async def _fetch_html(
     failed_sources: set[str] | None = None,
     headers: dict[str, str] | None = None,
 ) -> str | None:
+    domain = ""
+    try:
+        domain = urlparse(url).netloc.lower()
+    except Exception:
+        domain = ""
+
+    if domain.endswith("tax.gov.ua"):
+        try:
+            log.debug("staged fetch html: %s", url)
+            html = await staged_fetch_html(url)
+        except Exception as exc:
+            log.warning("staged html fetch exception %s: %s", url, exc)
+            html = None
+        if html:
+            return html
+        log.warning("html fetch failed %s: staged fetch returned no content", url)
+        if failed_sources is not None:
+            failed_sources.add(domain or url)
+        return None
+
     try:
         async with httpx.AsyncClient(
             follow_redirects=True,
