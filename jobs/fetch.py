@@ -1,5 +1,3 @@
-import importlib
-import importlib.util
 import logging
 from collections import Counter
 from datetime import datetime, timezone, timedelta
@@ -38,40 +36,6 @@ REQUEST_HEADERS_HTML = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": REQUEST_HEADERS.get("Accept-Language", "uk-UA,uk;q=0.9,en;q=0.8"),
 }
-
-REQUEST_HEADERS_BROWSER = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-}
-
-HTTP2_SUPPORTED = importlib.util.find_spec("h2") is not None
-CURL_CFFI_AVAILABLE = importlib.util.find_spec("curl_cffi") is not None
-PLAYWRIGHT_AVAILABLE = importlib.util.find_spec("playwright.async_api") is not None
-
-_TAXGOV_CAPABILITIES_LOGGED = False
-
-if CURL_CFFI_AVAILABLE:
-    curl_cffi_requests = importlib.import_module("curl_cffi.requests")
-else:
-    curl_cffi_requests = None
-
-if PLAYWRIGHT_AVAILABLE:
-    playwright_async_api = importlib.import_module("playwright.async_api")
-else:
-    playwright_async_api = None
 
 TOPIC_QUERIES = {
     "PillarTwo": '("Pillar Two" OR GloBE OR BEPS) site:oecd.org OR site:europa.eu OR site:eur-lex.europa.eu',
@@ -143,15 +107,11 @@ async def _fetch_html(
     failed_sources: set[str] | None = None,
     headers: dict[str, str] | None = None,
 ) -> str | None:
-    if "tax.gov.ua" in url:
-        return await _fetch_taxgov_html(url, failed_sources=failed_sources)
-
     try:
         async with httpx.AsyncClient(
             follow_redirects=True,
             timeout=20,
             headers=headers or REQUEST_HEADERS_HTML,
-            http2=HTTP2_SUPPORTED,
         ) as client:
             log.debug("fetching html: %s", url)
             r = await client.get(url)
@@ -166,184 +126,6 @@ async def _fetch_html(
             failed_sources.add(_domain(url) or url)
         return None
     return None
-
-
-async def _fetch_taxgov_html(
-    url: str,
-    failed_sources: set[str] | None = None,
-) -> str | None:
-    """Attempt to fetch tax.gov.ua content with progressively stronger clients."""
-
-    _log_taxgov_capabilities()
-
-    if "://tax.gov.ua" in url and "://www.tax.gov.ua" not in url:
-        url_www = url.replace("://tax.gov.ua", "://www.tax.gov.ua")
-    else:
-        url_www = url
-
-    referer = "https://www.tax.gov.ua/"
-    base_headers = dict(REQUEST_HEADERS_BROWSER)
-    referer_headers = {**base_headers, "Referer": referer}
-
-    async def _try_httpx(http2: bool) -> str | None:
-        headers_variant = dict(referer_headers)
-        if http2:
-            headers_variant["Accept-Encoding"] = "gzip, deflate, br"
-        else:
-            headers_variant["Accept-Encoding"] = "gzip, deflate"
-        try:
-            log.info(
-                "tax.gov.ua fetch step=httpx %s starting url=%s",
-                "h2" if http2 else "h1",
-                url_www,
-            )
-            async with httpx.AsyncClient(
-                follow_redirects=True,
-                timeout=30,
-                headers=headers_variant,
-                http2=http2,
-            ) as client:
-                try:
-                    await client.get(referer)
-                except Exception as warmup_exc:
-                    log.debug("tax.gov.ua warmup (%s) error: %s", "h2" if http2 else "h1", warmup_exc)
-                response = await client.get(url_www, headers=headers_variant)
-                if response.status_code == 200 and response.text:
-                    log.info(
-                        "tax.gov.ua fetch step=httpx %s status=%s -> success",
-                        "h2" if http2 else "h1",
-                        response.status_code,
-                    )
-                    return response.text
-                log.info(
-                    "tax.gov.ua fetch step=httpx %s status=%s -> retry",
-                    "h2" if http2 else "h1",
-                    response.status_code,
-                )
-        except Exception as exc:
-            log.info(
-                "tax.gov.ua fetch step=httpx %s error=%s -> retry",
-                "h2" if http2 else "h1",
-                exc,
-            )
-        return None
-
-    if HTTP2_SUPPORTED:
-        html = await _try_httpx(http2=True)
-        if html:
-            return html
-    else:
-        log.info("tax.gov.ua fetch step=httpx h2 skipped (http2 not available)")
-
-    html = await _try_httpx(http2=False)
-    if html:
-        return html
-
-    if CURL_CFFI_AVAILABLE and curl_cffi_requests is not None:
-        session = None
-        try:
-            log.info("tax.gov.ua fetch step=curl_cffi starting url=%s", url_www)
-            session = curl_cffi_requests.Session()
-            session.headers.update(base_headers)
-            session.impersonate = "chrome124"
-            try:
-                session.get(referer, timeout=25)
-            except Exception as warmup_exc:
-                log.debug("tax.gov.ua curl_cffi warmup error: %s", warmup_exc)
-            response = session.get(url_www, timeout=25)
-            if response.status_code == 200 and response.text:
-                log.info(
-                    "tax.gov.ua fetch step=curl_cffi status=%s -> success",
-                    response.status_code,
-                )
-                return response.text
-            log.info(
-                "tax.gov.ua fetch step=curl_cffi status=%s -> retry",
-                response.status_code,
-            )
-        except Exception as exc:
-            log.info("tax.gov.ua fetch step=curl_cffi error=%s -> retry", exc)
-        finally:
-            if session is not None:
-                try:
-                    session.close()
-                except Exception:
-                    pass
-    else:
-        log.info("tax.gov.ua fetch step=curl_cffi skipped (module not installed)")
-
-    if PLAYWRIGHT_AVAILABLE and playwright_async_api is not None:
-        browser = None
-        context = None
-        html: str | None = None
-        try:
-            log.info("tax.gov.ua fetch step=playwright starting url=%s", url_www)
-            async with playwright_async_api.async_playwright() as pw:
-                browser = await pw.chromium.launch(headless=True, args=["--no-sandbox"])
-                context = await browser.new_context(
-                    user_agent=base_headers["User-Agent"],
-                    locale="uk-UA",
-                    extra_http_headers=base_headers,
-                )
-                page = await context.new_page()
-                try:
-                    await page.goto(referer, wait_until="domcontentloaded", timeout=25000)
-                except Exception as warmup_exc:
-                    log.debug("tax.gov.ua playwright warmup error: %s", warmup_exc)
-                response = await page.goto(url_www, wait_until="domcontentloaded", timeout=30000)
-                status = getattr(response, "status", None)
-                if status == 200:
-                    html = await page.content()
-                    log.info(
-                        "tax.gov.ua fetch step=playwright status=%s -> success",
-                        status,
-                    )
-                else:
-                    log.info(
-                        "tax.gov.ua fetch step=playwright status=%s -> retry",
-                        status,
-                    )
-        except Exception as exc:
-            log.info("tax.gov.ua fetch step=playwright error=%s -> retry", exc)
-        finally:
-            if context is not None:
-                try:
-                    await context.close()
-                except Exception:
-                    pass
-            if browser is not None:
-                try:
-                    await browser.close()
-                except Exception:
-                    pass
-        if html:
-            return html
-    else:
-        log.info("tax.gov.ua fetch step=playwright skipped (module not installed)")
-
-    if failed_sources is not None:
-        failed_sources.add("www.tax.gov.ua")
-    log.warning("tax.gov.ua fetch failed after all steps url=%s", url_www)
-    return None
-
-
-def _log_taxgov_capabilities() -> None:
-    global _TAXGOV_CAPABILITIES_LOGGED
-    if _TAXGOV_CAPABILITIES_LOGGED:
-        return
-    log.info(
-        "tax.gov.ua capability http2: %s",
-        "ON" if HTTP2_SUPPORTED else "OFF",
-    )
-    log.info(
-        "tax.gov.ua capability curl_cffi: %s",
-        "OK" if CURL_CFFI_AVAILABLE else "ABSENT",
-    )
-    log.info(
-        "tax.gov.ua capability playwright: %s",
-        "OK" if PLAYWRIGHT_AVAILABLE else "ABSENT",
-    )
-    _TAXGOV_CAPABILITIES_LOGGED = True
 
 
 async def _load_feed(
