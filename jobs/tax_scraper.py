@@ -21,18 +21,8 @@ BASE_URL = "https://tax.gov.ua"
 REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-    "Connection": "keep-alive",
-    "Referer": "https://tax.gov.ua/",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-User": "?1",
 }
 
 
@@ -286,12 +276,11 @@ async def fetch_tax_news(client: httpx.AsyncClient | None = None) -> List[TaxNew
             headers=REQUEST_HEADERS,
             timeout=20,
             follow_redirects=True,
-            http2=True,
         )
         close_client = True
 
     try:
-        response = await client.get(TAX_NEWS_URL, headers=REQUEST_HEADERS)
+        response = await client.get(TAX_NEWS_URL)
         if response.status_code != 200:
             log.warning("tax news fetch status %s", response.status_code)
             return []
