@@ -11,6 +11,7 @@ from db.models import Article, Draft, DraftPreview
 from services.post_sections import split_post_sections
 from services.previews import build_preview_variants
 from services.utm import with_utm
+from services.tax_urls import tax_print_url
 
 log = logging.getLogger("bot")
 
@@ -100,6 +101,18 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.info("article level1 check failed for id=%s", aid)
             await update.message.reply_text("Відхилено: джерело не входить до Рівень 1.")
             return
+
+        summary_text = (a.summary or "").strip()
+        print_url = tax_print_url(a.url)
+        summary_for_log = " ".join(summary_text.split())
+        log.info(
+            "make_cmd article payload article_id=%s url=%s print_url=%s summary_len=%s summary_text=%s",
+            a.id,
+            a.url,
+            print_url,
+            len(summary_text),
+            summary_for_log,
+        )
 
         # Готовим ввод для LLM
         base_text = f"{a.title}\n\n{(a.summary or '')}\n\n{a.url}"
