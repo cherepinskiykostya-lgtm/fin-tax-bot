@@ -3,12 +3,23 @@ from __future__ import annotations
 import html
 from typing import Optional
 
+_NONBREAKING_WHITESPACE = "\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000"
+_SPACE_TRANSLATION = {ord(ch): " " for ch in _NONBREAKING_WHITESPACE}
+_SPACE_TRANSLATION[ord("\ufeff")] = None
+
+
+def _normalize_space_chars(text: str) -> str:
+    if not text:
+        return text
+    return text.translate(_SPACE_TRANSLATION)
+
 from selectolax.parser import HTMLParser
 
 from services.article_text import extract_article_text
 
 
 def _normalize_paragraphs(text: str) -> str:
+    text = _normalize_space_chars(text)
     paragraphs: list[str] = []
     buffer: list[str] = []
 
