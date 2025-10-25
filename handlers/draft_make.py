@@ -101,15 +101,6 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Відхилено: джерело не входить до Рівень 1.")
             return
 
-        summary_text = (a.summary or "").strip()
-        log.info(
-            "make_cmd article payload article_id=%s url=%s summary_len=%s summary_text=%s",
-            a.id,
-            a.url,
-            len(summary_text),
-            summary_text,
-        )
-
         # Готовим ввод для LLM
         base_text = f"{a.title}\n\n{(a.summary or '')}\n\n{a.url}"
         prompt = PROMPT_TEMPLATE.format(base_tags=BASE_TAGS)
