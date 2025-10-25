@@ -9,8 +9,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import httpx
-
 from jobs.tax_scraper import (
     TAX_NEWS_URL,
     TaxNewsItem,
@@ -55,18 +53,15 @@ def test_parse_tax_news_returns_items():
     assert ld.published == datetime(2024, 10, 5, 6, 30, tzinfo=timezone.utc)
 
 
-def test_fetch_tax_news_uses_client_mock():
+def test_fetch_tax_news_uses_custom_fetcher():
     html = FIXTURE_PATH.read_text(encoding="utf-8")
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == TAX_NEWS_URL
-        return httpx.Response(200, text=html)
-
-    transport = httpx.MockTransport(handler)
-
     async def run() -> list[TaxNewsItem]:
-        async with httpx.AsyncClient(transport=transport) as client:
-            return await fetch_tax_news(client=client)
+        async def fake_fetch(url: str) -> str | None:
+            assert url == TAX_NEWS_URL
+            return html
+
+        return await fetch_tax_news(fetcher=fake_fetch)
 
     items = asyncio.run(run())
 
@@ -74,14 +69,11 @@ def test_fetch_tax_news_uses_client_mock():
 
 
 def test_fetch_tax_news_handles_error_status():
-    async def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="")
-
-    transport = httpx.MockTransport(handler)
-
     async def run() -> list[TaxNewsItem]:
-        async with httpx.AsyncClient(transport=transport) as client:
-            return await fetch_tax_news(client=client)
+        async def fake_fetch(_: str) -> str | None:
+            return None
+
+        return await fetch_tax_news(fetcher=fake_fetch)
 
     items = asyncio.run(run())
 
