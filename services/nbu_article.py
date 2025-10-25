@@ -7,7 +7,7 @@ from selectolax.parser import HTMLParser, Node
 
 DATE_RE = re.compile(r"\d{1,2}\s+[А-Яа-яІіЄєҐґ\.]+\.?\s+\d{4}\s+\d{2}:\d{2}|^\d{1,2}:\d{2}$")
 STOP_PHRASES = ("теги", "поділитися", "останн")
-WHITELIST_TAGS = {"p", "h2", "h3", "ul", "ol", "li", "blockquote"}
+WHITELIST_TAGS = {"p", "div", "h2", "h3", "ul", "ol", "li", "blockquote"}
 MIN_BODY_LENGTH = 200
 
 
@@ -61,7 +61,7 @@ def _collect_from_node(node: Node, seen: set[str]) -> list[str]:
     tag = (node.tag or "").lower()
     targets = ",".join(sorted(WHITELIST_TAGS))
 
-    if tag in WHITELIST_TAGS:
+    if tag in WHITELIST_TAGS and (tag != "div" or _is_atomic_div(node)):
         nodes = [node]
     else:
         nodes = node.css(targets)
@@ -82,6 +82,11 @@ def _collect_from_node(node: Node, seen: set[str]) -> list[str]:
             if text and text not in seen:
                 seen.add(text)
                 collected.append(f"• {text}")
+        elif current_tag == "div":
+            if not _is_atomic_div(current):
+                continue
+            seen.add(text)
+            collected.append(text)
         else:
             seen.add(text)
             collected.append(text)
@@ -122,10 +127,30 @@ def _score_container(node: Node) -> int:
     for el in node.traverse():
         tag = (el.tag or "").lower()
         if tag in WHITELIST_TAGS:
+            if tag == "div" and not _is_atomic_div(el):
+                continue
             text = (el.text() or "").strip()
             if text:
                 score += len(text)
     return score
+
+
+def _has_whitelisted_descendant(node: Node) -> bool:
+    child = node.child
+    while child is not None:
+        tag = (child.tag or "").lower()
+        if tag and tag in WHITELIST_TAGS:
+            return True
+        if _has_whitelisted_descendant(child):
+            return True
+        child = child.next
+    return False
+
+
+def _is_atomic_div(node: Node) -> bool:
+    if (node.tag or "").lower() != "div":
+        return False
+    return not _has_whitelisted_descendant(node)
 
 
 def extract_body_fallback_generic(
@@ -163,10 +188,17 @@ def extract_body_fallback_generic(
 
     if best is None or best_score == 0:
         parts: list[str] = []
-        for p in tree.css("p"):
-            text = (p.text() or "").strip()
-            if text:
-                parts.append(text)
+        seen: set[str] = set()
+        root = tree.root
+        if root is not None:
+            for el in root.traverse():
+                tag = (el.tag or "").lower()
+                if tag == "p" or (tag == "div" and _is_atomic_div(el)):
+                    text = (el.text() or "").strip()
+                    if not text or text in seen:
+                        continue
+                    seen.add(text)
+                    parts.append(text)
         text = "\n\n".join(parts).strip()
         if len(text) >= min_len:
             return text[:max_len]
@@ -177,6 +209,8 @@ def extract_body_fallback_generic(
     for el in best.traverse():
         tag = (el.tag or "").lower()
         if tag not in WHITELIST_TAGS:
+            continue
+        if tag == "div" and not _is_atomic_div(el):
             continue
 
         text = (el.text() or "").strip()
@@ -207,11 +241,17 @@ def extract_body_fallback_generic(
 
     body = "\n\n".join(part for part in parts if part).strip()
     if len(body) < min_len:
-        fallback = "\n\n".join(
-            (el.text() or "").strip()
-            for el in best.css("p")
-            if (el.text() or "").strip()
-        ).strip()
+        fallback_parts: list[str] = []
+        seen_fallback: set[str] = set()
+        for el in best.traverse():
+            tag = (el.tag or "").lower()
+            if tag == "p" or (tag == "div" and _is_atomic_div(el)):
+                text = (el.text() or "").strip()
+                if not text or text in seen_fallback:
+                    continue
+                seen_fallback.add(text)
+                fallback_parts.append(text)
+        fallback = "\n\n".join(fallback_parts).strip()
         if len(fallback) > len(body):
             body = fallback
 
