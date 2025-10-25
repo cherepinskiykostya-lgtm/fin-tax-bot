@@ -107,6 +107,9 @@ def _normalize_url(url: str) -> str:
             target = params.get(key)
             if target and target[0]:
                 return target[0]
+    print_url = tax_print_url(url)
+    if print_url:
+        return print_url
     return url
 
 
