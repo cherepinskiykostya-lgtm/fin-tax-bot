@@ -22,6 +22,7 @@ from services.nbu_article import (
     extract_nbu_body,
     is_reliable_nbu_body,
 )
+from services.tax_article import extract_tax_body
 
 log = logging.getLogger("bot")
 
@@ -244,6 +245,18 @@ async def ingest_one(
                     else:
                         log.warning(
                             "NBU: both primary and fallback body extract failed url=%s",
+                            normalized_url,
+                        )
+                        return "skipped_no_body"
+                elif dom.endswith("tax.gov.ua"):
+                    body_text = extract_tax_body(html)
+                    if not body_text:
+                        body_text = extract_body_fallback_generic(html)
+                    if body_text:
+                        summary_candidate = body_text
+                    else:
+                        log.warning(
+                            "tax.gov.ua: failed to extract body url=%s",
                             normalized_url,
                         )
                         return "skipped_no_body"
