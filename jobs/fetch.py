@@ -2,7 +2,7 @@ import logging
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import urlparse, urlencode, parse_qs
 
 import httpx
 import feedparser
@@ -16,7 +16,6 @@ from db.models import Article
 from jobs.nbu_scraper import fetch_nbu_news, NBU_NEWS_URL
 from jobs.tax_scraper import fetch_tax_news, TAX_NEWS_URL
 from jobs.staged_fetch import staged_fetch_html
-from services.tax_urls import tax_print_url
 from services.summary import choose_summary, normalize_text
 from services.nbu_article import (
     extract_body_fallback_generic,
@@ -38,36 +37,6 @@ REQUEST_HEADERS_HTML = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": REQUEST_HEADERS.get("Accept-Language", "uk-UA,uk;q=0.9,en;q=0.8"),
 }
-
-async def _fetch_tax_article_htmls(
-    url: str,
-) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    primary_html: Optional[str] = None
-    print_html: Optional[str] = None
-    print_url: Optional[str] = None
-
-    try:
-        primary_html = await staged_fetch_html(url)
-    except Exception as exc:  # pragma: no cover - network/runtime guard
-        log.warning("tax html fetch exception %s: %s", url, exc)
-        primary_html = None
-
-    print_url = tax_print_url(url)
-    if print_url:
-        if print_url == url:
-            print_html = primary_html
-        else:
-            try:
-                print_html = await staged_fetch_html(print_url)
-                if print_html:
-                    log.debug("tax print html fetched %s", print_url)
-            except Exception as exc:  # pragma: no cover - network/runtime guard
-                log.info("tax print fetch exception %s: %s", print_url, exc)
-                print_html = None
-    else:
-        log.debug("tax print url not derived for %s", url)
-
-    return primary_html, print_html, print_url
 
 TOPIC_QUERIES = {
     "PillarTwo": '("Pillar Two" OR GloBE OR BEPS) site:oecd.org OR site:europa.eu OR site:eur-lex.europa.eu',
@@ -262,78 +231,30 @@ async def ingest_one(
                 return "duplicate"
 
             image_url = None
-
-            html: Optional[str]
-            html_for_summary: Optional[str]
-            image_source_html: Optional[str]
-
-            summary_source_url = normalized_url
-            summary_source_kind = "primary"
-            derived_print_url: Optional[str] = None
-
-            if dom.endswith("tax.gov.ua"):
-                primary_html, print_html, print_url = await _fetch_tax_article_htmls(normalized_url)
-                derived_print_url = print_url
-                html = primary_html or print_html
-                html_for_summary = print_html or primary_html
-                image_source_html = primary_html or print_html
-                if html_for_summary and html_for_summary is print_html and print_url:
-                    summary_source_url = print_url
-                    summary_source_kind = "print"
-                elif html_for_summary:
-                    summary_source_kind = "primary"
-                if not html:
-                    log.debug("no html content for %s", normalized_url)
-                    if failed_sources is not None:
-                        failed_sources.add(dom or normalized_url)
-            else:
-                html = await _fetch_html(normalized_url, failed_sources=failed_sources)
-                html_for_summary = html
-                image_source_html = html
-                if html_for_summary:
-                    summary_source_kind = "primary"
-
+            html = await _fetch_html(normalized_url, failed_sources=failed_sources)
             summary_candidate = summary
-
-            if image_source_html:
-                image_url = _extract_image(image_source_html)
-
-            if dom.endswith("bank.gov.ua"):
-                if not html:
-                    log.warning(
-                        "skip NBU article: html fetch failed url=%s",
-                        normalized_url,
-                    )
-                    return "skipped_no_body"
-                body_text = extract_nbu_body(html)
-                if not body_text:
-                    body_text = extract_body_fallback_generic(html)
-                if body_text:
-                    summary_candidate = body_text
+            if html:
+                image_url = _extract_image(html)
+                if dom.endswith("bank.gov.ua"):
+                    body_text = extract_nbu_body(html)
+                    if not body_text:
+                        body_text = extract_body_fallback_generic(html)
+                    if body_text:
+                        summary_candidate = body_text
+                    else:
+                        log.warning(
+                            "NBU: both primary and fallback body extract failed url=%s",
+                            normalized_url,
+                        )
+                        return "skipped_no_body"
                 else:
-                    log.warning(
-                        "NBU: both primary and fallback body extract failed url=%s",
-                        normalized_url,
-                    )
-                    return "skipped_no_body"
+                    summary_candidate = choose_summary(title or "", summary_candidate, html)
             else:
-                if html_for_summary:
-                    summary_candidate = choose_summary(title or "", summary_candidate, html_for_summary)
-                elif not html:
-                    log.debug("no html content for %s", normalized_url)
-                    if failed_sources is not None:
-                        failed_sources.add(dom or normalized_url)
+                log.debug("no html content for %s", normalized_url)
+                if failed_sources is not None:
+                    failed_sources.add(dom or normalized_url)
 
             summary_text = normalize_text(summary_candidate)
-
-            log.info(
-                "article body extracted url=%s source_kind=%s source_url=%s print_url=%s text=%s",
-                normalized_url,
-                summary_source_kind,
-                summary_source_url,
-                derived_print_url,
-                summary_text,
-            )
 
             if dom.endswith("bank.gov.ua"):
                 if not is_reliable_nbu_body(summary_text, html):
@@ -345,11 +266,8 @@ async def ingest_one(
 
             if not summary_text:
                 log.warning(
-                    "skip article without extracted body url=%s source_kind=%s source_url=%s print_url=%s title=%s",
+                    "skip article without extracted body url=%s title=%s",
                     normalized_url,
-                    summary_source_kind,
-                    summary_source_url,
-                    derived_print_url,
                     title,
                 )
                 return "skipped_no_body"
