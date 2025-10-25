@@ -27,7 +27,7 @@ def test_parse_tax_news_returns_items():
 
     items = parse_tax_news(html, now=REFERENCE_NOW)
 
-    assert len(items) == 4
+    assert len(items) == 5
     assert all(isinstance(item, TaxNewsItem) for item in items)
 
     by_url = {item.url: item for item in items}
@@ -47,6 +47,11 @@ def test_parse_tax_news_returns_items():
     assert third.summary == "Короткий зміст старішої новини."
     assert third.published.astimezone(KYIV_TZ) == datetime(2024, 9, 12, 0, 0, tzinfo=KYIV_TZ)
 
+    printed = by_url["https://tax.gov.ua/media-tsentr/novini/print-945326.html"]
+    assert printed.title == "Друкована новина"
+    assert printed.summary.startswith("Публікація повинна")
+    assert printed.published.astimezone(KYIV_TZ) == datetime(2024, 11, 5, 11, 30, tzinfo=KYIV_TZ)
+
     ld = by_url["https://tax.gov.ua/media-tsentr/novini/analityka-podatky/"]
     assert ld.title == "Аналітика щодо податкових змін"
     assert ld.summary.startswith("Роз'яснено ключові")
@@ -65,7 +70,7 @@ def test_fetch_tax_news_uses_custom_fetcher():
 
     items = asyncio.run(run())
 
-    assert len(items) == 4
+    assert len(items) == 5
 
 
 def test_fetch_tax_news_handles_error_status():
