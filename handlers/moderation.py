@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from sqlalchemy import select, or_, delete
@@ -417,11 +417,11 @@ async def draft_preview_action_callback(update: Update, context: ContextTypes.DE
 async def articles_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать последние собранные статьи (по умолчанию только свободные)."""
 
-    limit = 10
+    limit = 20
     if context.args:
         try:
             parsed = int(context.args[0])
-            limit = max(1, min(parsed, 30))
+            limit = max(1, min(parsed, 100))
         except ValueError:
             pass
 
@@ -447,7 +447,26 @@ async def articles_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"- {status} | ID {art.id} | {lvl} | {art.source_domain} | "
             f"{art.title[:80]}{'…' if len(art.title) > 80 else ''}"
         )
-    await update.message.reply_text("\n".join(lines))
+    max_message_length = 4000
+    current_lines: List[str] = []
+    current_length = 0
+
+    for line in lines:
+        line_length = len(line)
+        # Account for newline that will be inserted when joining.
+        extra_length = 1 if current_lines else 0
+        if current_length + extra_length + line_length > max_message_length:
+            await update.message.reply_text("\n".join(current_lines))
+            current_lines = [line]
+            current_length = line_length
+        else:
+            if extra_length:
+                current_length += extra_length
+            current_lines.append(line)
+            current_length += line_length
+
+    if current_lines:
+        await update.message.reply_text("\n".join(current_lines))
 
 
 @admin_only
