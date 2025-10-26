@@ -143,29 +143,6 @@ def _drop_leading_title(review: str, title: str) -> str:
     return "\n".join(remaining).strip()
 
 
-def _remove_subscribe_lines(review: str) -> tuple[str, bool]:
-    if not review.strip():
-        return review.strip(), False
-
-    target = SUBSCRIBE_PROMO_TEXT.casefold()
-    lines = review.splitlines()
-    filtered: list[str] = []
-    removed = False
-
-    for line in lines:
-        if target and target in line.casefold():
-            removed = True
-            continue
-        filtered.append(line)
-
-    while filtered and not filtered[0].strip():
-        filtered.pop(0)
-    while filtered and not filtered[-1].strip():
-        filtered.pop()
-
-    return "\n".join(filtered).strip(), removed
-
-
 def _format_inline(text: str) -> str:
     result: List[str] = []
     plain: List[str] = []
@@ -401,7 +378,6 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
     header = f"<b>{_escape_text(title.strip())}</b>"
     review_clean = _clean_review(review_md)
     review_without_title = _drop_leading_title(review_clean, title)
-    review_without_subscribe, _ = _remove_subscribe_lines(review_without_title)
     link_line = f"<a href=\"{_escape_attr(link_url)}\">читати далі>></a>"
     tags_line = _escape_text(tags.strip())
     subscribe_block = (
@@ -424,7 +400,7 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
     def build_variant(base_limit: int, total_limit: int) -> str:
         limit = max(base_limit, 0)
         while True:
-            review_candidate_md = _smart_trim(review_without_subscribe, limit)
+            review_candidate_md = _smart_trim(review_without_title, limit)
             review_candidate_html = _markdown_to_telegram_html(review_candidate_md)
             main_text = _join_blocks(
                 header,
