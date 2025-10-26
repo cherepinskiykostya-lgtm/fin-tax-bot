@@ -61,11 +61,10 @@ async def _send_variant_to_chat(
     image_url: Optional[str],
     as_photo: bool,
 ) -> None:
-    normalized_image_url = image_url.strip() if image_url else ""
-    if as_photo and normalized_image_url:
+    if as_photo and image_url:
         await context.bot.send_photo(
             chat_id=chat_id,
-            photo=normalized_image_url,
+            photo=image_url,
             caption=text,
             parse_mode="HTML",
         )
@@ -204,8 +203,6 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     preview_with_image = previews.get(PREVIEW_WITH_IMAGE)
     preview_without_image = previews.get(PREVIEW_WITHOUT_IMAGE)
 
-    has_image = bool((d.image_url or "").strip())
-
     buttons: list[list[InlineKeyboardButton]] = []
     if preview_with_image:
         buttons.append(
@@ -227,7 +224,7 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         )
 
-    if preview_with_image and has_image:
+    if preview_with_image and d.image_url:
         buttons.append(
             [
                 InlineKeyboardButton(
@@ -251,7 +248,7 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     intro_lines = [f"Драфт {d.id}: доступні варіанти прев'ю."]
     if preview_with_image:
-        if has_image:
+        if d.image_url:
             intro_lines.append("З картинкою — все повідомлення має вміститись у 1024 символи.")
         else:
             intro_lines.append("Короткий варіант до 1024 символів доступний без збереженої картинки.")
@@ -302,8 +299,7 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         previews = await _ensure_preview_variants(s, d, a)
 
-        has_image = bool((d.image_url or "").strip())
-        variant = PREVIEW_WITH_IMAGE if has_image else PREVIEW_WITHOUT_IMAGE
+        variant = PREVIEW_WITH_IMAGE if d.image_url else PREVIEW_WITHOUT_IMAGE
         if len(context.args) > 1:
             option = context.args[1].lower()
             if option in {"img", "image", "photo", "with", "with_image", "pic", "фото", "картинка"}:
@@ -311,7 +307,7 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif option in {"text", "noimage", "without", "without_image", "plain", "без", "текст"}:
                 variant = PREVIEW_WITHOUT_IMAGE
 
-        if variant == PREVIEW_WITH_IMAGE and not has_image:
+        if variant == PREVIEW_WITH_IMAGE and not d.image_url:
             variant = PREVIEW_WITHOUT_IMAGE
 
         text = previews.get(variant)
@@ -319,7 +315,7 @@ async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Не знайдено збережений варіант для публікації.")
             return
 
-        prefer_photo = variant == PREVIEW_WITH_IMAGE and has_image
+        prefer_photo = variant == PREVIEW_WITH_IMAGE and bool(d.image_url)
 
         try:
             await _send_variant_to_chat(
@@ -381,8 +377,8 @@ async def draft_preview_action_callback(update: Update, context: ContextTypes.DE
         if not text:
             await query.answer("Варіант відсутній.", show_alert=True)
             return
-        has_image = bool((draft.image_url or "").strip())
-        prefer_photo = variant == PREVIEW_WITH_IMAGE and has_image
+
+        prefer_photo = variant == PREVIEW_WITH_IMAGE and bool(draft.image_url)
 
         if action == "show":
             await query.answer("Надсилаю прев'ю…", show_alert=False)
