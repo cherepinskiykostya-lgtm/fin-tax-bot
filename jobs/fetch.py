@@ -296,6 +296,20 @@ async def ingest_one(
                 if html_for_summary:
                     summary_source_kind = "primary"
 
+            parser_source_url: Optional[str] = None
+            if html_for_summary:
+                parser_source_url = summary_source_url
+            elif html:
+                parser_source_url = normalized_url
+
+            if parser_source_url:
+                log.info(
+                    "article parser input url=%s source_kind=%s parser_source_url=%s",
+                    normalized_url,
+                    summary_source_kind,
+                    parser_source_url,
+                )
+
             summary_candidate = summary
 
             if image_source_html:
