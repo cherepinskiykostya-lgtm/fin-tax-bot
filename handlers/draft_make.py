@@ -28,9 +28,6 @@ def admin_only(func):
     return wrapper
 
 
-from services.text_utils import normalize_title, remove_subscribe_promos
-
-
 BASE_TAGS = "#PillarTwo #CFC #CRS #BO #WHT #IPBox #TP #DiiaCity #NBU #UkraineTax #IT"
 SUBSCRIBE_PROMO_MD = "[**Підпишись на IT Tax Radar**](https://t.me/ITTaxRadar)"
 DISCLAIMER = "Матеріал має інформативний характер і не є податковою/юридичною консультацією."
@@ -40,7 +37,6 @@ PROMPT_TEMPLATE = """Ти редактор новин з міжнародног�
 Короткий пост: стисла версія обсягом 700–750 символів.
 Теги: добери релевантні хештеги.
 Не додавай інші розділи чи звернення до читача, не давай порад. Тон: нейтрально-експертний, фактологічний.
-Не повторюй заголовок у текстових блоках — використай інформацію без дублювання назви статті.
 Ось базовий перелік хештегів. Залишай тільки ті, що релевантні статті, нерелевантні видаляй та за потреби додавай власні: {base_tags}
 Дотримуйся структури:
 Довгий пост:
@@ -105,7 +101,7 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Відхилено: джерело не входить до Рівень 1.")
             return
 
-        summary_text = remove_subscribe_promos((a.summary or "").strip())
+        summary_text = (a.summary or "").strip()
         log.info(
             "make_cmd article payload article_id=%s url=%s summary_len=%s summary_text=%s",
             a.id,
@@ -115,15 +111,14 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Готовим ввод для LLM
-        normalized_title = normalize_title(a.title)
-        base_text = f"{normalized_title}\n\n{summary_text}\n\n{a.url}"
+        base_text = f"{a.title}\n\n{(a.summary or '')}\n\n{a.url}"
         prompt = PROMPT_TEMPLATE.format(base_tags=BASE_TAGS)
         ua = await _llm_rewrite_ua(prompt, base_text)
 
         ua = ua.strip()
 
         sections = split_post_sections(ua)
-        long_post = remove_subscribe_promos(sections.long.strip())
+        long_post = sections.long.strip()
 
         tags = BASE_TAGS
         tag_line = re.search(r"^Теги:\s*(.+)$", ua, flags=re.MULTILINE)
@@ -141,8 +136,8 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     tags = " ".join(candidate.split())
             ua = re.sub(r"^Теги:.*$", "", ua, flags=re.MULTILINE).strip()
 
-        body_core = long_post or remove_subscribe_promos(ua)
-        title_line = f"**{normalize_title(a.title)}**"
+        body_core = long_post or ua
+        title_line = f"**{a.title.strip()}**"
         body_md = f"{title_line}\n\n{body_core.strip()}" if body_core.strip() else title_line
         body_md = f"{body_md.strip()}\n\n{SUBSCRIBE_PROMO_MD}".strip()
 
