@@ -232,13 +232,6 @@ def _extract_image(html: str) -> str | None:
     return None
 
 
-def _normalize_title_text(value: str | None) -> str | None:
-    if not value:
-        return None
-    normalized = " ".join(str(value).split()).strip()
-    return normalized or None
-
-
 async def ingest_one(
     url: str,
     title: str,
@@ -249,8 +242,6 @@ async def ingest_one(
     normalized_url = _normalize_url(url)
     dom = _domain(normalized_url)
     lvl1 = _in_whitelist_lvl1(dom)
-
-    normalized_title = _normalize_title_text(title)
 
     if not lvl1:
         log.info(
@@ -344,7 +335,7 @@ async def ingest_one(
                     return "skipped_no_body"
             else:
                 if html_for_summary:
-                    summary_candidate = choose_summary(normalized_title or "", summary_candidate, html_for_summary)
+                    summary_candidate = choose_summary(title or "", summary_candidate, html_for_summary)
                 elif not html:
                     log.debug("no html content for %s", normalized_url)
                     if failed_sources is not None:
@@ -380,7 +371,7 @@ async def ingest_one(
                 )
                 return "skipped_no_body"
             art = Article(
-                title=normalized_title or normalized_url,
+                title=title or normalized_url,
                 url=normalized_url,
                 source_domain=dom,
                 published_at=published,
