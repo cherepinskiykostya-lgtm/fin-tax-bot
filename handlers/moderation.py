@@ -183,6 +183,8 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id if update.effective_user else None
     log.info("preview_cmd requested by %s for draft_id=%s", uid, did)
 
+    previews: Dict[str, str] = {}
+
     async with SessionLocal() as s:
         d: Optional[Draft] = await s.get(Draft, did)
         if not d:
@@ -196,10 +198,13 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Статтю не знайдено.")
             return
 
-        await _ensure_preview_variants(s, d, a)
+        previews = await _ensure_preview_variants(s, d, a)
+
+    preview_with_image = previews.get(PREVIEW_WITH_IMAGE)
+    preview_without_image = previews.get(PREVIEW_WITHOUT_IMAGE)
 
     buttons: list[list[InlineKeyboardButton]] = []
-    if d.image_url:
+    if preview_with_image:
         buttons.append(
             [
                 InlineKeyboardButton(
@@ -209,16 +214,17 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         )
 
-    buttons.append(
-        [
-            InlineKeyboardButton(
-                "👁️ Прев'ю без картинки (до 4096)",
-                callback_data=f"draft:{d.id}:show:{PREVIEW_WITHOUT_IMAGE}",
-            )
-        ]
-    )
+    if preview_without_image:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "👁️ Прев'ю без картинки (до 4096)",
+                    callback_data=f"draft:{d.id}:show:{PREVIEW_WITHOUT_IMAGE}",
+                )
+            ]
+        )
 
-    if d.image_url:
+    if preview_with_image and d.image_url:
         buttons.append(
             [
                 InlineKeyboardButton(
@@ -228,24 +234,32 @@ async def preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         )
 
-    buttons.append(
-        [
-            InlineKeyboardButton(
-                "✅ Опублікувати без картинки",
-                callback_data=f"draft:{d.id}:publish:{PREVIEW_WITHOUT_IMAGE}",
-            )
-        ]
-    )
+    if preview_without_image:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "✅ Опублікувати без картинки",
+                    callback_data=f"draft:{d.id}:publish:{PREVIEW_WITHOUT_IMAGE}",
+                )
+            ]
+        )
 
     keyboard = InlineKeyboardMarkup(buttons)
-    intro_lines = [
-        f"Драфт {d.id}: доступні два варіанти прев'ю.",
-        "З картинкою — все повідомлення має вміститись у 1024 символи.",
-        "Без картинки — можна використати до 4096 символів.",
-        "Скористайся кнопками нижче, щоб переглянути або опублікувати обраний формат.",
-    ]
 
-    await update.message.reply_text("\n".join(intro_lines), reply_markup=keyboard)
+    intro_lines = [f"Драфт {d.id}: доступні варіанти прев'ю."]
+    if preview_with_image:
+        if d.image_url:
+            intro_lines.append("З картинкою — все повідомлення має вміститись у 1024 символи.")
+        else:
+            intro_lines.append("Короткий варіант до 1024 символів доступний без збереженої картинки.")
+    if preview_without_image:
+        intro_lines.append("Без картинки — можна використати до 4096 символів.")
+    intro_lines.append(
+        "Скористайся кнопками нижче, щоб переглянути або опублікувати обраний формат."
+    )
+
+    if update.message:
+        await update.message.reply_text("\n".join(intro_lines), reply_markup=keyboard)
 
 
 @admin_only
