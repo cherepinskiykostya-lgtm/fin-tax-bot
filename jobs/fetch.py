@@ -6,7 +6,6 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 import feedparser
-from selectolax.parser import HTMLParser
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +22,7 @@ from services.nbu_article import (
     extract_nbu_body,
     is_reliable_nbu_body,
 )
+from services.image_extract import extract_image
 
 log = logging.getLogger("bot")
 
@@ -217,21 +217,6 @@ async def _load_feed(
         log.warning("Feed parsing issue %s: %s", url, parsed.bozo_exception)
     return parsed
 
-def _extract_image(html: str) -> str | None:
-    try:
-        tree = HTMLParser(html)
-        # og:image
-        og = tree.css_first('meta[property="og:image"]')
-        if og and og.attributes.get("content"):
-            return og.attributes["content"]
-        tw = tree.css_first('meta[name="twitter:image"]')
-        if tw and tw.attributes.get("content"):
-            return tw.attributes["content"]
-    except Exception:
-        return None
-    return None
-
-
 async def ingest_one(
     url: str,
     title: str,
@@ -313,7 +298,10 @@ async def ingest_one(
             summary_candidate = summary
 
             if image_source_html:
-                image_url = _extract_image(image_source_html)
+                image_url = extract_image(
+                    image_source_html,
+                    base_url=parser_source_url or normalized_url or url,
+                )
 
             if dom.endswith("bank.gov.ua"):
                 if not html:
