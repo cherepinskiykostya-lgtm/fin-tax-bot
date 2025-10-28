@@ -47,7 +47,7 @@ def test_parse_tax_news_returns_items():
     assert third.summary == "Короткий зміст старішої новини."
     assert third.published.astimezone(KYIV_TZ) == datetime(2024, 9, 12, 0, 0, tzinfo=KYIV_TZ)
 
-    printed = by_url["https://tax.gov.ua/media-tsentr/novini/drukovana-novina-945326.html"]
+    printed = by_url["https://tax.gov.ua/media-tsentr/novini/print-945326.html"]
     assert printed.title == "Друкована новина"
     assert printed.summary.startswith("Публікація повинна")
     assert printed.published.astimezone(KYIV_TZ) == datetime(2024, 11, 5, 11, 30, tzinfo=KYIV_TZ)
