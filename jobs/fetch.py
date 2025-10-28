@@ -107,6 +107,9 @@ def _normalize_url(url: str) -> str:
             target = params.get(key)
             if target and target[0]:
                 return target[0]
+    print_url = tax_print_url(url)
+    if print_url:
+        return print_url
     return url
 
 
@@ -236,11 +239,7 @@ async def ingest_one(
 
     try:
         async with SessionLocal() as s:
-            candidates_set = {normalized_url, url}
-            print_candidate = tax_print_url(normalized_url)
-            if print_candidate:
-                candidates_set.add(print_candidate)
-            candidates = tuple(candidates_set)
+            candidates = tuple({normalized_url, url})
             exists = (
                 await s.execute(
                     select(Article.id).where(Article.url.in_(candidates))
@@ -254,8 +253,7 @@ async def ingest_one(
 
             html: Optional[str]
             html_for_summary: Optional[str]
-            image_source_html: Optional[str] = None
-            image_base_url: Optional[str] = None
+            image_source_html: Optional[str]
 
             summary_source_url = normalized_url
             summary_source_kind = "primary"
@@ -266,14 +264,12 @@ async def ingest_one(
                 derived_print_url = print_url
                 html = primary_html or print_html
                 html_for_summary = print_html or primary_html
-                if print_html:
+                image_source_html = primary_html or print_html
+                if html_for_summary and html_for_summary is print_html and print_url:
+                    summary_source_url = print_url
                     summary_source_kind = "print"
-                    summary_source_url = print_url or normalized_url
                 elif html_for_summary:
                     summary_source_kind = "primary"
-                if primary_html:
-                    image_source_html = primary_html
-                    image_base_url = normalized_url or url
                 if not html:
                     log.debug("no html content for %s", normalized_url)
                     if failed_sources is not None:
@@ -282,7 +278,6 @@ async def ingest_one(
                 html = await _fetch_html(normalized_url, failed_sources=failed_sources)
                 html_for_summary = html
                 image_source_html = html
-                image_base_url = normalized_url or url
                 if html_for_summary:
                     summary_source_kind = "primary"
 
@@ -303,10 +298,9 @@ async def ingest_one(
             summary_candidate = summary
 
             if image_source_html:
-                base_url = image_base_url or parser_source_url or normalized_url or url
                 image_url = extract_image(
                     image_source_html,
-                    base_url=base_url,
+                    base_url=parser_source_url or normalized_url or url,
                 )
 
             if dom.endswith("bank.gov.ua"):
