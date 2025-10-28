@@ -143,16 +143,6 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Собираем блок «Джерела» и теги
         link_with_utm = with_utm(a.url)
-        log.info(
-            "draft image selected article_id=%s image_url=%s",
-            a.id,
-            a.image_url,
-        )
-        log.info(
-            "draft link selected article_id=%s link_url=%s",
-            a.id,
-            link_with_utm,
-        )
         src_md = f"Читати далі: [{a.source_domain}]({link_with_utm})\n\n_{DISCLAIMER}_"
 
         d = Draft(
