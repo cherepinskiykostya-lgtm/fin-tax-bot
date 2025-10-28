@@ -1,5 +1,6 @@
 import logging
 import re
+from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Update
@@ -8,8 +9,12 @@ from telegram.ext import ContextTypes
 from settings import settings
 from db.session import SessionLocal
 from db.models import Article, Draft, DraftPreview
+from jobs.staged_fetch import staged_fetch_html
+from services.image_extract import extract_image
 from services.post_sections import split_post_sections
 from services.previews import build_preview_variants
+from services.tax_image import prefer_tax_article_image
+from services.tax_urls import tax_canonical_url
 from services.utm import with_utm
 
 log = logging.getLogger("bot")
@@ -70,6 +75,62 @@ async def _llm_rewrite_ua(prompt: str, article_payload: str) -> str:
     except Exception as exc:
         log.warning("llm rewrite failed, fallback to original text: %s", exc)
         return article_payload[:MAX_REWRITE_LENGTH]
+
+
+
+async def _ensure_tax_article_image(article: Article) -> str | None:
+    """Upgrade preview-sized DPS images when possible."""
+
+    image_url = (article.image_url or "").strip() or None
+    if not article.url:
+        return image_url
+
+    try:
+        netloc = urlparse(article.url).netloc.lower()
+    except Exception:
+        netloc = ""
+
+    if "tax.gov.ua" not in netloc and "tax.gov.ua" not in (article.source_domain or ""):
+        return image_url
+
+    needs_upgrade = not image_url or "preview" in image_url.lower()
+    if not needs_upgrade:
+        return image_url
+
+    canonical_url = tax_canonical_url(article.url) or article.url
+
+    try:
+        html = await staged_fetch_html(canonical_url)
+    except Exception as exc:  # pragma: no cover - network/runtime guard
+        log.info("tax image fetch exception url=%s: %s", canonical_url, exc)
+        html = None
+
+    if not html:
+        return image_url
+
+    base_url = canonical_url
+    primary_candidate = extract_image(html, base_url=base_url)
+    fallback = primary_candidate or image_url
+
+    upgraded = prefer_tax_article_image(
+        html,
+        base_url=base_url,
+        fallback=fallback,
+    )
+
+    candidate = upgraded or fallback
+
+    if candidate and candidate != image_url:
+        log.info(
+            "tax image upgraded article_id=%s old=%s new=%s",
+            article.id,
+            image_url,
+            candidate,
+        )
+        article.image_url = candidate
+        return candidate
+
+    return image_url
 
 @admin_only
 async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -142,7 +203,19 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         body_md = f"{body_md.strip()}\n\n{SUBSCRIBE_PROMO_MD}".strip()
 
         # Собираем блок «Джерела» и теги
-        link_with_utm = with_utm(a.url)
+        image_url = await _ensure_tax_article_image(a)
+        canonical_article_url = tax_canonical_url(a.url) or a.url
+        link_with_utm = with_utm(canonical_article_url)
+        log.info(
+            "draft image selected article_id=%s image_url=%s",
+            a.id,
+            image_url,
+        )
+        log.info(
+            "draft link selected article_id=%s link_url=%s",
+            a.id,
+            link_with_utm,
+        )
         src_md = f"Читати далі: [{a.source_domain}]({link_with_utm})\n\n_{DISCLAIMER}_"
 
         d = Draft(
@@ -150,7 +223,7 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             body_md=body_md.strip(),
             sources_md=src_md,
             tags=tags,
-            image_url=a.image_url,
+            image_url=image_url,
             created_by=update.effective_user.id if update.effective_user else None,
         )
         s.add(d)
