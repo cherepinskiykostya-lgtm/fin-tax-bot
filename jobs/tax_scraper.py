@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from selectolax.parser import HTMLParser, Node
 
 from services.ukrainian_dates import KYIV_TZ, parse_ukrainian_date
+from services.tax_urls import tax_print_url
 from jobs.staged_fetch import staged_fetch_html
 
 log = logging.getLogger("bot")
@@ -40,6 +41,9 @@ def _normalize_url(value: str | None) -> str | None:
         return None
     if parsed.netloc and "tax.gov.ua" not in parsed.netloc:
         return None
+    print_url = tax_print_url(absolute)
+    if print_url:
+        absolute = print_url
     return absolute
 
 
