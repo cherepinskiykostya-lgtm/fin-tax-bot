@@ -17,7 +17,6 @@ from jobs.tax_scraper import fetch_tax_news, TAX_NEWS_URL
 from jobs.staged_fetch import staged_fetch_html
 from services.tax_urls import tax_print_url
 from services.summary import choose_summary, normalize_text
-from services.tax_summary import initial_summary_candidate
 from services.nbu_article import (
     extract_body_fallback_generic,
     extract_nbu_body,
@@ -70,7 +69,6 @@ async def _fetch_tax_article_htmls(
 
     return primary_html, print_html, print_url
 
-
 TOPIC_QUERIES = {
     "PillarTwo": '("Pillar Two" OR GloBE OR BEPS) site:oecd.org OR site:europa.eu OR site:eur-lex.europa.eu',
     "CFC": '(КІК OR "controlled foreign company" OR CFC) site:zakon.rada.gov.ua OR site:tax.gov.ua OR site:minfin.gov.ua',
@@ -109,6 +107,9 @@ def _normalize_url(url: str) -> str:
             target = params.get(key)
             if target and target[0]:
                 return target[0]
+    print_url = tax_print_url(url)
+    if print_url:
+        return print_url
     return url
 
 
@@ -238,11 +239,7 @@ async def ingest_one(
 
     try:
         async with SessionLocal() as s:
-            candidates_set = {normalized_url, url}
-            print_candidate = tax_print_url(normalized_url)
-            if print_candidate:
-                candidates_set.add(print_candidate)
-            candidates = tuple(candidates_set)
+            candidates = tuple({normalized_url, url})
             exists = (
                 await s.execute(
                     select(Article.id).where(Article.url.in_(candidates))
@@ -256,8 +253,7 @@ async def ingest_one(
 
             html: Optional[str]
             html_for_summary: Optional[str]
-            image_source_html: Optional[str] = None
-            image_base_url: Optional[str] = None
+            image_source_html: Optional[str]
 
             summary_source_url = normalized_url
             summary_source_kind = "primary"
@@ -268,14 +264,12 @@ async def ingest_one(
                 derived_print_url = print_url
                 html = primary_html or print_html
                 html_for_summary = print_html or primary_html
-                if print_html:
+                image_source_html = primary_html or print_html
+                if html_for_summary and html_for_summary is print_html and print_url:
+                    summary_source_url = print_url
                     summary_source_kind = "print"
-                    summary_source_url = normalized_url
                 elif html_for_summary:
                     summary_source_kind = "primary"
-                if primary_html:
-                    image_source_html = primary_html
-                    image_base_url = normalized_url or url
                 if not html:
                     log.debug("no html content for %s", normalized_url)
                     if failed_sources is not None:
@@ -284,7 +278,6 @@ async def ingest_one(
                 html = await _fetch_html(normalized_url, failed_sources=failed_sources)
                 html_for_summary = html
                 image_source_html = html
-                image_base_url = normalized_url or url
                 if html_for_summary:
                     summary_source_kind = "primary"
 
@@ -302,17 +295,12 @@ async def ingest_one(
                     parser_source_url,
                 )
 
-            summary_candidate = initial_summary_candidate(
-                dom,
-                summary_source_kind,
-                summary,
-            )
+            summary_candidate = summary
 
             if image_source_html:
-                base_url = image_base_url or parser_source_url or normalized_url or url
                 image_url = extract_image(
                     image_source_html,
-                    base_url=base_url,
+                    base_url=parser_source_url or normalized_url or url,
                 )
 
             if dom.endswith("bank.gov.ua"):
@@ -335,24 +323,13 @@ async def ingest_one(
                     return "skipped_no_body"
             else:
                 if html_for_summary:
-                    summary_candidate = choose_summary(
-                        title or "",
-                        summary_candidate,
-                        html_for_summary,
-                    )
+                    summary_candidate = choose_summary(title or "", summary_candidate, html_for_summary)
                 elif not html:
                     log.debug("no html content for %s", normalized_url)
                     if failed_sources is not None:
                         failed_sources.add(dom or normalized_url)
 
             summary_text = normalize_text(summary_candidate)
-
-            if (
-                not summary_text
-                and summary
-                and dom.endswith("tax.gov.ua")
-            ):
-                summary_text = normalize_text(summary)
 
             log.info(
                 "article body extracted url=%s source_kind=%s source_url=%s print_url=%s text=%s",
