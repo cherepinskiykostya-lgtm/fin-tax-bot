@@ -11,7 +11,6 @@ from db.models import Article, Draft, DraftPreview
 from services.post_sections import split_post_sections
 from services.previews import build_preview_variants
 from services.utm import with_utm
-from services.tax_urls import tax_canonical_url
 
 log = logging.getLogger("bot")
 
@@ -143,18 +142,7 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         body_md = f"{body_md.strip()}\n\n{SUBSCRIBE_PROMO_MD}".strip()
 
         # Собираем блок «Джерела» и теги
-        canonical_article_url = tax_canonical_url(a.url) or a.url
-        link_with_utm = with_utm(canonical_article_url)
-        log.info(
-            "draft image selected article_id=%s image_url=%s",
-            a.id,
-            a.image_url,
-        )
-        log.info(
-            "draft link selected article_id=%s link_url=%s",
-            a.id,
-            link_with_utm,
-        )
+        link_with_utm = with_utm(a.url)
         src_md = f"Читати далі: [{a.source_domain}]({link_with_utm})\n\n_{DISCLAIMER}_"
 
         d = Draft(
