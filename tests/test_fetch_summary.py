@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 from pathlib import Path
 
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "dummy")
@@ -9,6 +9,7 @@ os.environ.setdefault("CHANNEL_ID", "0")
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from services.summary import choose_summary  # noqa: E402
+from services.tax_summary import initial_summary_candidate  # noqa: E402
 
 
 HTML_SAMPLE = """
@@ -47,3 +48,21 @@ def test_choose_summary_falls_back_to_article_text_when_meta_missing():
     """
     result = choose_summary("Новина", None, html)
     assert "Перший факт." in result
+
+
+def test_initial_summary_candidate_ignores_tax_listing_summary_when_print_available():
+    assert (
+        initial_summary_candidate("tax.gov.ua", "print", "teaser text")
+        is None
+    )
+
+
+def test_initial_summary_candidate_keeps_listing_summary_for_other_sources():
+    assert (
+        initial_summary_candidate("example.com", "print", "teaser text")
+        == "teaser text"
+    )
+    assert (
+        initial_summary_candidate("tax.gov.ua", "primary", "teaser text")
+        == "teaser text"
+    )
