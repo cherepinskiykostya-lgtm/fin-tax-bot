@@ -15,6 +15,7 @@ from services.previews import (
     PREVIEW_WITHOUT_IMAGE,
 )
 from services.utm import with_utm
+from services.tax_urls import tax_canonical_url
 
 log = logging.getLogger("bot")
 
@@ -48,10 +49,11 @@ async def _ensure_preview_variants(
     required = {PREVIEW_WITH_IMAGE, PREVIEW_WITHOUT_IMAGE}
 
     if not required.issubset(preview_map.keys()):
+        canonical_url = tax_canonical_url(article.url) or article.url
         variants = build_preview_variants(
             title=article.title,
             review_md=draft.body_md,
-            link_url=with_utm(article.url),
+            link_url=with_utm(canonical_url),
             tags=draft.tags,
         )
         for kind, text in variants.items():
