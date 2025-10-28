@@ -18,7 +18,6 @@ from jobs.staged_fetch import staged_fetch_html
 from services.tax_urls import tax_print_url, tax_canonical_url
 from services.summary import choose_summary, normalize_text
 from services.tax_summary import initial_summary_candidate
-from services.tax_image import prefer_tax_article_image
 from services.nbu_article import (
     extract_body_fallback_generic,
     extract_nbu_body,
@@ -313,29 +312,12 @@ async def ingest_one(
                 summary,
             )
 
-            if not image_source_html and dom.endswith("tax.gov.ua"):
-                try:
-                    retry_html = await staged_fetch_html(normalized_url)
-                except Exception as exc:  # pragma: no cover - network/runtime guard
-                    log.info("tax image refetch exception %s: %s", normalized_url, exc)
-                    retry_html = None
-                if retry_html:
-                    log.info("tax image refetch succeeded url=%s", normalized_url)
-                    image_source_html = retry_html
-                    image_base_url = normalized_url or url
-
             if image_source_html:
                 base_url = image_base_url or parser_source_url or normalized_url or url
                 image_url = extract_image(
                     image_source_html,
                     base_url=base_url,
                 )
-                if dom.endswith("tax.gov.ua"):
-                    image_url = prefer_tax_article_image(
-                        image_source_html,
-                        base_url=base_url,
-                        fallback=image_url,
-                    )
 
             if dom.endswith("bank.gov.ua"):
                 if not html:
@@ -375,12 +357,6 @@ async def ingest_one(
                 and dom.endswith("tax.gov.ua")
             ):
                 summary_text = normalize_text(summary)
-
-            log.info(
-                "article image selected url=%s image_url=%s",
-                normalized_url,
-                image_url,
-            )
 
             log.info(
                 "article body extracted url=%s source_kind=%s source_url=%s print_url=%s text=%s",
