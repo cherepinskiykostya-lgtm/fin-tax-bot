@@ -163,12 +163,6 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tags=d.tags,
         )
 
-        log.info(
-            "draft link selected article_id=%s link_url=%s",
-            a.id,
-            link_with_utm,
-        )
-
         for kind, text in preview_variants.items():
             s.add(
                 DraftPreview(
