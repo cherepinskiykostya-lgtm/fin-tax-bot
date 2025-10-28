@@ -182,3 +182,83 @@ def test_ingest_tax_article_normalizes_print_url(monkeypatch):
     assert article.url == main_url
     assert article.image_url == "https://tax.gov.ua/media/main.jpg"
 
+
+def test_ingest_tax_article_prefers_non_preview_image(monkeypatch):
+    main_url = "https://tax.gov.ua/media-tsentr/novini/947477.html"
+    print_url = "https://tax.gov.ua/media-tsentr/novini/print-947477.html"
+    primary_html = (
+        "<html><body><div class=\"article__content\">"
+        "<img src=\"/data/material/000/813/947477/preview1.jpg\" />"
+        "<img src=\"/data/material/000/813/947477/6900d1880b6df.jpg\" />"
+        "</div></body></html>"
+    )
+    print_html = (
+        "<html><body><article><p>Основний текст з друкованої версії.</p></article></body></html>"
+    )
+
+    fetch_calls: list[str] = []
+    captured: dict[str, object] = {}
+
+    async def fake_staged_fetch_html(url: str) -> str | None:
+        fetch_calls.append(url)
+        if "print-" in url:
+            return print_html
+        return primary_html
+
+    class DummyResult:
+        def scalar_one_or_none(self):
+            return None
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.added: list = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, stmt):
+            return DummyResult()
+
+        def add(self, obj):
+            self.added.append(obj)
+            captured["article"] = obj
+
+        async def commit(self):
+            return None
+
+        async def refresh(self, obj):
+            obj.id = 1
+            return None
+
+    def fake_choose_summary(title: str, provided, html_text):
+        return "Основний текст з друкованої версії."
+
+    def fake_extract_image(html: str, base_url: str | None = None):
+        return "https://tax.gov.ua/data/material/000/813/947477/preview1.jpg"
+
+    monkeypatch.setattr(fetch, "staged_fetch_html", fake_staged_fetch_html)
+    monkeypatch.setattr(fetch, "SessionLocal", lambda: DummySession())
+    monkeypatch.setattr(fetch, "choose_summary", fake_choose_summary)
+    monkeypatch.setattr(fetch, "extract_image", fake_extract_image)
+
+    status = asyncio.run(
+        fetch.ingest_one(
+            url=main_url,
+            title="Новина",
+            published=datetime.now(timezone.utc),
+            summary="Сніпет зі списку",
+        )
+    )
+
+    assert status == "created"
+    assert fetch_calls == [main_url, print_url]
+
+    article = captured["article"]
+    assert (
+        article.image_url
+        == "https://tax.gov.ua/data/material/000/813/947477/6900d1880b6df.jpg"
+    )
+
