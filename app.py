@@ -11,6 +11,7 @@ from handlers.moderation import (
     approve_cmd,
     articles_cmd,
     articles_reset_cmd,
+    articles_reset_callback,
     queue_refresh_callback,
     draft_preview_action_callback,
 )
@@ -66,6 +67,7 @@ tg_app.add_handler(CommandHandler("approve", approve_cmd))
 tg_app.add_handler(CommandHandler("make", make_cmd))
 tg_app.add_handler(CommandHandler("articles_reset", articles_reset_cmd))
 tg_app.add_handler(CallbackQueryHandler(queue_refresh_callback, pattern="^refresh_news$"))
+tg_app.add_handler(CallbackQueryHandler(articles_reset_callback, pattern="^reset_articles$"))
 tg_app.add_handler(
     CallbackQueryHandler(
         draft_preview_action_callback,
