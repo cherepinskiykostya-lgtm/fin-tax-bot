@@ -16,6 +16,7 @@ from services.previews import build_preview_variants
 from services.tax_image import prefer_tax_article_image
 from services.tax_urls import tax_canonical_url
 from services.utm import with_utm
+from services.text_cleanup import strip_redundant_preamble
 
 log = logging.getLogger("bot")
 
@@ -43,7 +44,7 @@ PROMPT_TEMPLATE = """Ти редактор новин з міжнародног�
 Теги: добери релевантні хештеги.
 Не додавай інші розділи чи звернення до читача, не давай порад. Тон: нейтрально-експертний, фактологічний.
 Ось базовий перелік хештегів. Залишай тільки ті, що релевантні статті, нерелевантні видаляй та за потреби додавай власні: {base_tags}
-Заголовок джерела: «{article_title}». Не повторюй цей заголовок дослівно в тексті постів.
+Заголовок джерела: «{article_title}». Не повторюй цей заголовок дослівно в тексті постів і не дублюй службові рядки (наприклад, дату публікації) на початку тексту.
 Дотримуйся структури:
 Довгий пост:
 ...
@@ -133,6 +134,7 @@ async def _ensure_tax_article_image(article: Article) -> str | None:
 
     return image_url
 
+
 @admin_only
 async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -200,6 +202,7 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ua = re.sub(r"^Теги:.*$", "", ua, flags=re.MULTILINE).strip()
 
         body_core = long_post or ua
+        body_core = strip_redundant_preamble(body_core, a.title or "")
         title_line = f"**{a.title.strip()}**"
         body_md = f"{title_line}\n\n{body_core.strip()}" if body_core.strip() else title_line
         body_md = f"{body_md.strip()}\n\n{SUBSCRIBE_PROMO_MD}".strip()
