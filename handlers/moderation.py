@@ -113,7 +113,10 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id if update.effective_user else None
     log.info("queue_cmd requested by %s", uid)
     keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🔄 Оновити новини", callback_data="refresh_news")]]
+        [
+            [InlineKeyboardButton("🔄 Оновити новини", callback_data="refresh_news")],
+            [InlineKeyboardButton("🗑️ Очистити базу статей", callback_data="reset_articles")],
+        ]
     )
     async with SessionLocal() as s:  # type: AsyncSession
         rows = (
@@ -175,7 +178,10 @@ async def queue_refresh_callback(update: Update, context: ContextTypes.DEFAULT_T
                 lines.append(f"{name} - не доступен")
 
     keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🔄 Оновити новини", callback_data="refresh_news")]]
+        [
+            [InlineKeyboardButton("🔄 Оновити новини", callback_data="refresh_news")],
+            [InlineKeyboardButton("🗑️ Очистити базу статей", callback_data="reset_articles")],
+        ]
     )
     target_message = query.message
     if target_message:
@@ -505,16 +511,54 @@ async def articles_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(current_lines))
 
 
+async def _reset_articles_storage() -> Dict[str, int]:
+    async with SessionLocal() as s:  # type: AsyncSession
+        previews_result = await s.execute(delete(DraftPreview))
+        drafts_result = await s.execute(delete(Draft))
+        articles_result = await s.execute(delete(Article))
+        await s.commit()
+
+    def _count(result):
+        return result.rowcount if result.rowcount is not None else 0
+
+    return {
+        "previews": _count(previews_result),
+        "drafts": _count(drafts_result),
+        "articles": _count(articles_result),
+    }
+
+
 @admin_only
 async def articles_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Повністю очищає таблицю статей."""
+    """Повністю очищає таблиці зі статтями та пов'язаними драфтами."""
 
     uid = update.effective_user.id if update.effective_user else None
     log.info("articles_reset_cmd requested by %s", uid)
 
-    async with SessionLocal() as s:  # type: AsyncSession
-        result = await s.execute(delete(Article))
-        await s.commit()
+    counts = await _reset_articles_storage()
 
-    deleted = result.rowcount if result.rowcount is not None else 0
-    await update.message.reply_text(f"Базу статей очищено. Видалено записів: {deleted}.")
+    await update.message.reply_text(
+        "Бази очищено:\n"
+        f"- статті: {counts['articles']}\n"
+        f"- драфти: {counts['drafts']}\n"
+        f"- прев'ю: {counts['previews']}"
+    )
+
+
+@admin_only
+async def articles_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+
+    await query.answer("Очищаю базу…", show_alert=False)
+
+    counts = await _reset_articles_storage()
+
+    if query.message:
+        await query.message.reply_text(
+            "Бази очищено:\n"
+            f"- статті: {counts['articles']}\n"
+            f"- драфти: {counts['drafts']}\n"
+            f"- прев'ю: {counts['previews']}"
+        )
