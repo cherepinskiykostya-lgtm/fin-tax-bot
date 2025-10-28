@@ -43,7 +43,7 @@ PROMPT_TEMPLATE = """Ти редактор новин з міжнародног�
 Теги: добери релевантні хештеги.
 Не додавай інші розділи чи звернення до читача, не давай порад. Тон: нейтрально-експертний, фактологічний.
 Ось базовий перелік хештегів. Залишай тільки ті, що релевантні статті, нерелевантні видаляй та за потреби додавай власні: {base_tags}
-Заголовок джерела: «{article_title}». Не повторюй цей заголовок дослівно в тексті постів.
+Заголовок джерела: «{article_title}». Не повторюй цей заголовок дослівно в тексті постів і не дублюй службові рядки (наприклад, дату публікації) на початку тексту.
 Дотримуйся структури:
 Довгий пост:
 ...
@@ -133,6 +133,57 @@ async def _ensure_tax_article_image(article: Article) -> str | None:
 
     return image_url
 
+
+def _normalize_text_for_compare(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _looks_like_ua_date(text: str) -> bool:
+    months = (
+        "січня",
+        "лютого",
+        "березня",
+        "квітня",
+        "травня",
+        "червня",
+        "липня",
+        "серпня",
+        "вересня",
+        "жовтня",
+        "листопада",
+        "грудня",
+    )
+    pattern = r"\b\d{1,2}\s+(" + "|".join(months) + ")\s+\d{4}\b"
+    return bool(re.search(pattern, text.lower()))
+
+
+def _strip_redundant_preamble(text: str, title: str) -> str:
+    if not text.strip():
+        return text.strip()
+
+    lines = text.splitlines()
+    cleaned: list[str] = []
+    normalized_title = _normalize_text_for_compare(title)
+    first_date_norm: str | None = None
+
+    for line in lines:
+        stripped = line.strip()
+        if not cleaned and not stripped:
+            continue
+        if not cleaned:
+            normalized_line = _normalize_text_for_compare(stripped)
+            if normalized_line and normalized_line == normalized_title:
+                continue
+            if _looks_like_ua_date(stripped):
+                if first_date_norm is None:
+                    first_date_norm = normalized_line
+                elif normalized_line == first_date_norm:
+                    continue
+        cleaned.append(line)
+
+    return "\n".join(cleaned).strip()
+
+
 @admin_only
 async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -200,6 +251,7 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ua = re.sub(r"^Теги:.*$", "", ua, flags=re.MULTILINE).strip()
 
         body_core = long_post or ua
+        body_core = _strip_redundant_preamble(body_core, a.title or "")
         title_line = f"**{a.title.strip()}**"
         body_md = f"{title_line}\n\n{body_core.strip()}" if body_core.strip() else title_line
         body_md = f"{body_md.strip()}\n\n{SUBSCRIBE_PROMO_MD}".strip()
