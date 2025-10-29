@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from settings import settings
 from db.session import SessionLocal
+from db.migrations import ensure_llm_raw_column
 from db.models import Article, Draft, DraftPreview
 from jobs.fetch import run_ingest_cycle
 from services.previews import (
@@ -118,6 +119,7 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🗑️ Очистити базу статей", callback_data="reset_articles")],
         ]
     )
+    await ensure_llm_raw_column()
     async with SessionLocal() as s:  # type: AsyncSession
         rows = (
             await s.execute(
