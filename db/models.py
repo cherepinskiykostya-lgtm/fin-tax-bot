@@ -49,8 +49,6 @@ class Draft(Base):
     article_id: Mapped[int] = mapped_column(Integer)
     # Сгенерированный текст UA 600–900 символів (без лінків)
     body_md: Mapped[str] = mapped_column(Text)
-    # Сырое сообщение, которое вернул LLM до постобработки
-    llm_raw_md: Mapped[Optional[str]] = mapped_column(Text)
     # список ссылок/источников (с UTM). Храним как простой текст csv/строки.
     sources_md: Mapped[str] = mapped_column(Text)
     # финальные хэштеги вида "#PillarTwo #CFC ..."
