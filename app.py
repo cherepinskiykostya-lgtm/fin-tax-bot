@@ -18,6 +18,7 @@ from handlers.moderation import (
 from handlers.draft_make import make_cmd
 from jobs.fetch import run_ingest_cycle
 from db import init_models
+from db.migrations import ensure_llm_raw_column
 
 
 from settings import settings
@@ -99,6 +100,9 @@ async def on_startup():
 
     await init_models()
     log.info("Database schema ensured")
+
+    await ensure_llm_raw_column()
+    log.info("Draft column llm_raw_md ensured")
 
     await tg_app.bot.set_my_commands(BOT_COMMANDS)
     log.info("Bot commands menu initialized")
