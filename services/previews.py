@@ -4,6 +4,8 @@ import html
 import re
 from typing import Dict, List, Tuple
 
+from services.text_cleanup import strip_redundant_preamble
+
 PREVIEW_WITH_IMAGE = "with_image"
 PREVIEW_WITHOUT_IMAGE = "without_image"
 
@@ -138,8 +140,20 @@ def _drop_leading_title(review: str, title: str) -> str:
         return review.strip()
 
     remaining = lines[first_idx + 1 :]
-    while remaining and not remaining[0].strip():
+
+    def drop_leading_blanks(buf: list[str]) -> None:
+        while buf and not buf[0].strip():
+            buf.pop(0)
+
+    drop_leading_blanks(remaining)
+
+    while remaining:
+        normalized = _normalize_for_compare(_strip_markdown_heading(remaining[0]))
+        if normalized != title_norm:
+            break
         remaining.pop(0)
+        drop_leading_blanks(remaining)
+
     return "\n".join(remaining).strip()
 
 
@@ -377,6 +391,7 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
     """Return HTML strings for both preview types."""
     header = f"<b>{_escape_text(title.strip())}</b>"
     review_clean = _clean_review(review_md)
+    review_clean = strip_redundant_preamble(review_clean, title)
     review_without_title = _drop_leading_title(review_clean, title)
     link_line = f"<a href=\"{_escape_attr(link_url)}\">читати далі>></a>"
     tags_line = _escape_text(tags.strip())
