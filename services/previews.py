@@ -4,8 +4,6 @@ import html
 import re
 from typing import Dict, List, Tuple
 
-from services.text_cleanup import strip_redundant_preamble
-
 PREVIEW_WITH_IMAGE = "with_image"
 PREVIEW_WITHOUT_IMAGE = "without_image"
 
@@ -379,7 +377,6 @@ def build_preview_variants(*, title: str, review_md: str, link_url: str, tags: s
     """Return HTML strings for both preview types."""
     header = f"<b>{_escape_text(title.strip())}</b>"
     review_clean = _clean_review(review_md)
-    review_clean = strip_redundant_preamble(review_clean, title)
     review_without_title = _drop_leading_title(review_clean, title)
     link_line = f"<a href=\"{_escape_attr(link_url)}\">читати далі>></a>"
     tags_line = _escape_text(tags.strip())
