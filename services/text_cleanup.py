@@ -36,6 +36,24 @@ def _looks_like_ua_date(text: str) -> bool:
     return bool(re.search(pattern, normalized))
 
 
+def _looks_like_person_intro(text: str) -> bool:
+    """Check if text looks like 'Name: description' (person introduction)."""
+    stripped = text.strip()
+    # Look for pattern: capitalized name/word(s) followed by colon
+    # e.g., "Леся Карнаух: текст", "В. о. Голови ДПС:"
+    if ":" not in stripped:
+        return False
+    colon_pos = stripped.find(":")
+    # Colon should be early in the text (before 100 chars) and text before colon should be relatively short
+    if colon_pos > 100 or colon_pos < 3:
+        return False
+    # Check if text before colon starts with capital letter (typical for names/titles)
+    before_colon = stripped[:colon_pos].strip()
+    if before_colon and before_colon[0].isupper():
+        return True
+    return False
+
+
 def strip_redundant_preamble(text: str, title: str) -> str:
     stripped_text = text.strip()
     if not stripped_text:
@@ -64,6 +82,10 @@ def strip_redundant_preamble(text: str, title: str) -> str:
                         continue
 
             if _looks_like_ua_date(stripped_line) or _looks_like_ua_date(normalized_line):
+                continue
+
+            # Skip lines that look like person introductions (e.g., "Леся Карнаух: текст")
+            if _looks_like_person_intro(stripped_line):
                 continue
 
             removing_header = False

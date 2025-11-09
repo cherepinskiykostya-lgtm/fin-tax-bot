@@ -10,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from services.text_cleanup import (  # noqa: E402
     rebuild_draft_body_md,
     strip_redundant_preamble,
+    _looks_like_person_intro,
 )
 
 
@@ -107,3 +108,35 @@ def test_rebuild_draft_body_md_without_promo():
     rebuilt = rebuild_draft_body_md(body, title, None)
 
     assert rebuilt == f"**{title}**\n\nОсновний текст"
+
+
+def test_looks_like_person_intro():
+    """Test detection of person introductions."""
+    # Should detect person intros
+    assert _looks_like_person_intro("Леся Карнаух: текст статті")
+    assert _looks_like_person_intro("В. о. Голови ДПС: описание")
+    assert _looks_like_person_intro("Іван Петренко: кілька слів")
+    
+    # Should NOT detect as person intro
+    assert not _looks_like_person_intro("текст без введення")
+    assert not _looks_like_person_intro("це просто текст з точкою.")
+    assert not _looks_like_person_intro("і це теж текст")
+    assert not _looks_like_person_intro(":не правильний формат")
+
+
+def test_strip_preamble_removes_date_and_person_intro():
+    """Test that both dates and person intros are removed."""
+    title = "Леся Карнаух: За 10 місяців місцеві бюджети отримали понад 403,2 млрд гривень"
+    payload = """04 листопада 2025
+
+                        Леся Карнаух: За 10 місяців місцеві бюджети отримали понад 403,2 млрд гривень
+
+Місцеві бюджети України за період отримали понад 403,2 млрд гривень."""
+
+    cleaned = strip_redundant_preamble(payload, title)
+
+    # Should remove date and person intro
+    assert "листопада" not in cleaned
+    assert "Леся Карнаух" not in cleaned.split("\n")[0]
+    # Should keep main content
+    assert "Місцеві бюджети України" in cleaned
