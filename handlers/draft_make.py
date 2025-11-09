@@ -215,9 +215,9 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raw_preview[:200],
             cleaned_preview[:200],
         )
-        title_line = f"**{a.title.strip()}**"
-        body_md = f"{title_line}\n\n{body_core.strip()}" if body_core.strip() else title_line
-        body_md = f"{body_md.strip()}\n\n{SUBSCRIBE_PROMO_MD}".strip()
+        # Don't include title in body_md - build_preview_variants will add it separately
+        body_md = body_core.strip() if body_core.strip() else ""
+        body_md = f"{body_md}\n\n{SUBSCRIBE_PROMO_MD}".strip() if body_md else SUBSCRIBE_PROMO_MD
 
         # Собираем блок «Джерела» и теги
         image_url = await _ensure_tax_article_image(a)

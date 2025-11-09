@@ -147,6 +147,7 @@ def _drop_leading_title(review: str, title: str) -> str:
 
     drop_leading_blanks(remaining)
 
+    # Drop all consecutive lines that are the same as the title (for cases where title repeats multiple times)
     while remaining:
         normalized = _normalize_for_compare(_strip_markdown_heading(remaining[0]))
         if normalized != title_norm:

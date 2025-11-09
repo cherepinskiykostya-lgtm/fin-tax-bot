@@ -64,3 +64,22 @@ def test_preview_drops_plain_title_after_header_block():
 
     for text in variants.values():
         assert text.count(title) == 1
+
+
+def test_preview_without_title_in_review_md():
+    """Test that preview works correctly when title is NOT in review_md."""
+    title = "ДПС отримала від EU4PFM 100 принтерів"
+    review_md = "Державна податкова служба отримала 100 принтерів...\n\nОсновний текст новини."
+
+    variants = build_preview_variants(
+        title=title,
+        review_md=review_md,
+        link_url="https://example.com/article",
+        tags="#UkraineTax",
+    )
+
+    for text in variants.values():
+        # Title should appear exactly once (added by build_preview_variants)
+        assert text.count(title) == 1
+        # It should be at the beginning in bold
+        assert text.startswith(f"<b>{title}</b>")
