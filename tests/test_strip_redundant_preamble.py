@@ -11,6 +11,7 @@ from services.text_cleanup import (  # noqa: E402
     rebuild_draft_body_md,
     strip_redundant_preamble,
     _looks_like_person_intro,
+    _looks_like_ua_date,
 )
 
 
@@ -140,3 +141,21 @@ def test_strip_preamble_removes_date_and_person_intro():
     assert "Леся Карнаух" not in cleaned.split("\n")[0]
     # Should keep main content
     assert "Місцеві бюджети України" in cleaned
+
+
+def test_looks_like_ua_date_various_formats():
+    """Test that date detection works for all Ukrainian date formats."""
+    # Should detect dates
+    assert _looks_like_ua_date("04 листопада 2025")
+    assert _looks_like_ua_date("1 січня 2025")
+    assert _looks_like_ua_date("31 грудня 2024")
+    assert _looks_like_ua_date("15 квітня 2023")
+    assert _looks_like_ua_date("28 лютого 2025")
+    assert _looks_like_ua_date("3 вересня 2022")
+    assert _looks_like_ua_date("текст з датою 04 листопада 2025 всередині")
+    
+    # Should NOT detect invalid dates
+    assert not _looks_like_ua_date("04листопада2025")  # No spaces
+    assert not _looks_like_ua_date("листопада 2025")  # Missing day
+    assert not _looks_like_ua_date("04 листопада")  # Missing year
+    assert not _looks_like_ua_date("текст без дати")
