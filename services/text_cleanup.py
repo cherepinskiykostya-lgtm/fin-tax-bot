@@ -68,7 +68,8 @@ def strip_redundant_preamble(text: str, title: str) -> str:
 
             removing_header = False
 
-        cleaned.append(line)
+        # Append stripped line to remove leading/trailing whitespace from all lines
+        cleaned.append(stripped_line)
 
     return "\n".join(cleaned).strip()
 
