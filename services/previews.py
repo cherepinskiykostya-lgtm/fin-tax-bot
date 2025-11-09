@@ -134,7 +134,7 @@ def _drop_leading_title(review: str, title: str) -> str:
             continue
         if _normalize_for_compare(_strip_markdown_heading(line)) == title_norm:
             first_idx = idx
-        break
+            break  # Found the title, stop looking
 
     if first_idx is None:
         return review.strip()
