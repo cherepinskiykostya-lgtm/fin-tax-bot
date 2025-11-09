@@ -68,7 +68,7 @@ def strip_redundant_preamble(text: str, title: str) -> str:
 
             removing_header = False
 
-        cleaned.append(line)
+        cleaned.append(stripped_line)
 
     return "\n".join(cleaned).strip()
 
