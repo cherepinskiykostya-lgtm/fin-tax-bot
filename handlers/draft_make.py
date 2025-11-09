@@ -216,8 +216,10 @@ async def make_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cleaned_preview[:200],
         )
         # Don't include title in body_md - build_preview_variants will add it separately
-        body_md = body_core.strip() if body_core.strip() else ""
-        body_md = f"{body_md}\n\n{SUBSCRIBE_PROMO_MD}".strip() if body_md else SUBSCRIBE_PROMO_MD
+        # If body_core is empty (e.g., only contained a title/date that was stripped), 
+        # use the original ua text as fallback
+        body_core_final = body_core.strip() if body_core.strip() else ua
+        body_md = f"{body_core_final}\n\n{SUBSCRIBE_PROMO_MD}".strip()
 
         # Собираем блок «Джерела» и теги
         image_url = await _ensure_tax_article_image(a)

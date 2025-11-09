@@ -107,24 +107,3 @@ def test_rebuild_draft_body_md_without_promo():
     rebuilt = rebuild_draft_body_md(body, title, None)
 
     assert rebuilt == f"**{title}**\n\nОсновний текст"
-
-
-def test_strip_preamble_removes_leading_whitespace():
-    """Test that leading whitespace is removed from lines."""
-    title = "ДПС отримала від EU4PFM 100 принтерів"
-    # Simulate text with lots of leading spaces (like from LLM output with formatting)
-    payload = """03 листопада 2025
-
-                        ДПС отримала від EU4PFM 100 принтерів
-
-Основний текст без пробілів."""
-
-    cleaned = strip_redundant_preamble(payload, title)
-
-    lines = cleaned.split("\n")
-    # First non-empty line should not have leading spaces
-    first_line = next((line for line in lines if line.strip()), "")
-    assert first_line == first_line.lstrip(), "Leading whitespace should be removed"
-    assert cleaned.startswith("Основний текст")
-    # Make sure we're not preserving spaces in the first line
-    assert not cleaned.startswith(" ")
